@@ -18,7 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/activout/nordray.whiterabbit/cli/internal/secrets"
+	"github.com/activout/nordray-whiterabbit/cli/internal/api"
+	"github.com/activout/nordray-whiterabbit/cli/internal/secrets"
 )
 
 // TestMain lets the test binary double as a fake BunnyCLI: rabbit starts it as the child process.
@@ -498,5 +499,19 @@ func TestAdminAudit_PrintsOldestFirstAndPassesFilters(t *testing.T) {
 	}
 	if code := h.run("admin", "audit", "--since", "yesterday"); code != 2 {
 		t.Fatal("a bad --since must be a usage error")
+	}
+}
+
+func TestWorkflowSnippet_FollowsThePlatformOfTheBinding(t *testing.T) {
+	gh := workflowSnippet(&api.Binding{RepositoryId: "1", Ref: "refs/heads/main", Environment: "prod",
+		WorkflowRef: "o/r/.github/workflows/deploy.yml@refs/heads/main"}, "https://wr.example")
+	for _, want := range []string{"In o/r/.github/workflows/deploy.yml:", "id-token: write", "environment: prod", "RABBIT_SERVER: https://wr.example", "rabbit -- "} {
+		if !strings.Contains(gh, want) {
+			t.Errorf("GitHub snippet lacks %q:\n%s", want, gh)
+		}
+	}
+	fj := workflowSnippet(&api.Binding{WorkflowRef: "o/r/.forgejo/workflows/deploy.yml"}, "https://wr.example")
+	if !strings.Contains(fj, "enable-openid-connect: true") || strings.Contains(fj, "id-token") {
+		t.Errorf("Forgejo snippet must use enable-openid-connect only:\n%s", fj)
 	}
 }

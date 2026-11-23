@@ -15,7 +15,7 @@ rabbit -- --help             # BunnyCLI's help, not rabbit's
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/activout/Nordray.WhiteRabbit/main/scripts/install-rabbit.sh | sh -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/activout/nordray-whiterabbit/main/scripts/install-rabbit.sh | sh -s -- v0.1.0
 ```
 
 The script downloads the release archive and `SHA256SUMS` from GitHub Releases, and refuses to install if the
@@ -91,7 +91,8 @@ rabbit admin audit --since 7d --binding 3   # what that workflow did, oldest fir
 Leave out `--ref` to accept the workflow from any branch or tag (e.g. release tags). Then protect the refs that can
 run it in the repository: who may push them, rulesets, or a protected GitHub environment (`--environment`).
 
-See [`examples/ci`](../examples/ci) for complete workflows.
+`bindings add` prints the lines the bound workflow needs (OIDC permission, `RABBIT_SERVER`, installing BunnyCLI and this
+rabbit version). See [`examples/ci`](../examples/ci) for complete workflows.
 
 ## AI agents
 

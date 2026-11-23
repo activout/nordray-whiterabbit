@@ -1,4 +1,4 @@
-module github.com/activout/nordray.whiterabbit/cli
+module github.com/activout/nordray-whiterabbit/cli
 
 go 1.24.7
 

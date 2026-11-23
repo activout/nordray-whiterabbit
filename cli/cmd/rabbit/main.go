@@ -6,7 +6,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/activout/nordray.whiterabbit/cli/internal/app"
+	"github.com/activout/nordray-whiterabbit/cli/internal/app"
 )
 
 func main() {
