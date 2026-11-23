@@ -176,6 +176,7 @@ var bunnyRoutes = bunnyRegistry.GetAll().Select(op => new RouteConfig
         ["CredentialKind"] = op.CredentialKind.ToString(),
         ["Redact"] = string.Join(';', op.RedactJsonFields),
         [ProxyRequestBodyPolicy.RestoreMetadataKey] = op.RestoreRedactedEnvironmentFrom ?? "",
+        [ProxyRequestBodyPolicy.RestoreAppMetadataKey] = op.RestoreRedactedAppEnvironmentFrom ?? "",
         [ProxyRequestBodyPolicy.AllowedFieldsMetadataKey] = string.Join(';', op.AllowedBodyFields ?? []),
     },
 }).ToList();

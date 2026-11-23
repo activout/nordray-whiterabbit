@@ -13,7 +13,8 @@ public sealed record BunnyOperation(
     string ConsentDescription,
     IReadOnlyList<string>? RedactJsonFields = null,
     string? RestoreRedactedEnvironmentFrom = null,
-    IReadOnlyList<string>? AllowedBodyFields = null)
+    IReadOnlyList<string>? AllowedBodyFields = null,
+    string? RestoreRedactedAppEnvironmentFrom = null)
 {
     /// <summary>
     /// JSON fields of a successful response that White Rabbit replaces before the caller sees them, because they hold
@@ -36,6 +37,13 @@ public sealed record BunnyOperation(
     /// that could also replace environment variables, endpoints or volumes.
     /// </summary>
     public IReadOnlyList<string>? AllowedBodyFields { get; init; } = AllowedBodyFields;
+
+    /// <summary>
+    /// For an operation that replaces a whole app (<c>containerTemplates[].environmentVariables[]</c>): the upstream
+    /// path of the app whose current containers, matched by <c>id</c> or else <c>name</c>, fill in values sent back as
+    /// the redaction placeholder. A placeholder anywhere else in the body is refused.
+    /// </summary>
+    public string? RestoreRedactedAppEnvironmentFrom { get; init; } = RestoreRedactedAppEnvironmentFrom;
 }
 
 public enum BunnyCredentialKind

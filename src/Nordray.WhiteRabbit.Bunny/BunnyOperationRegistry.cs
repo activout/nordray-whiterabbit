@@ -217,7 +217,7 @@ public sealed class BunnyOperationRegistry
 
         // --- Magic Containers and Bunny Database (Phase 6) ---
         // Reviewed against BunnyCLI 0.22.0's OpenAPI specs. Left out on purpose: log forwarding (its responses carry
-        // tokens), registry changes and single-registry reads, volume and endpoint changes, and database groups.
+        // tokens), registry changes and single-registry reads, separate volume and endpoint changes, and database groups.
 
         new BunnyOperation(
             OperationId: "mc.app.list",
@@ -360,6 +360,20 @@ public sealed class BunnyOperationRegistry
             ConsentTitle: "Create container app",
             ConsentDescription: "Create a Magic Containers app, e.g. a preview deployment.",
             RedactJsonFields: ["containerTemplates[].environmentVariables[].value"]),
+
+        new BunnyOperation(
+            OperationId: "mc.app.update",
+            IncomingMethod: "PUT",
+            IncomingPathTemplate: "/proxy/api.bunny.net/mc/apps/{appId}",
+            DestinationBaseUrl: BunnyApiBase,
+            DestinationPathTemplate: "/mc/apps/{appId}",
+            CredentialKind: BunnyCredentialKind.AccountApiKey,
+            RequiredCapability: "mc.manage",
+            RequiresAuthenticationOnly: false,
+            ConsentTitle: "Replace container app",
+            ConsentDescription: "Replace a Magic Containers app's whole configuration: containers, images, environment variables, endpoints, scaling and regions. Values sent back redacted keep their current value.",
+            RedactJsonFields: ["containerTemplates[].environmentVariables[].value"],
+            RestoreRedactedAppEnvironmentFrom: "/mc/apps/{appId}"),
 
         new BunnyOperation(
             OperationId: "mc.app.delete",
@@ -505,8 +519,10 @@ public sealed class BunnyOperationRegistry
         new("mc.env", "Set container environment variables",
             "Replace the environment variables of any container on the account. Current values are never shown, but " +
             "they can be overwritten or removed, and the new values reach the running code."),
-        new("mc.manage", "Create and delete container apps",
-            "Create Magic Containers apps, and delete any app on the account with its containers, e.g. preview deployments."),
+        new("mc.manage", "Create, replace and delete container apps",
+            "Create Magic Containers apps, replace the whole configuration of any app on the account (containers, " +
+            "images, environment variables, endpoints, scaling, regions), and delete any app with its containers, " +
+            "e.g. preview deployments. Current environment values are never shown."),
         new("db.read", "Read databases",
             "List every Bunny Database database on the account and read its details, the account's limits and the available regions."),
         new("db.manage", "Create and delete databases",
