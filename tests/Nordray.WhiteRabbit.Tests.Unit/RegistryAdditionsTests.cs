@@ -17,6 +17,7 @@ public class RegistryAdditionsTests
     [InlineData("POST", "/proxy/api.bunny.net/database/v2/databases", "db.database.create")]
     [InlineData("PUT", "/proxy/api.bunny.net/database/v2/databases/x/auth/generate", "db.token.generate")]
     [InlineData("PUT", "/proxy/api.bunny.net/mc/apps/abc/containers/def/env", "mc.container.env.set")]
+    [InlineData("PUT", "/proxy/api.bunny.net/mc/apps/abc", "mc.app.update")]
     [InlineData("POST", "/proxy/api.bunny.net/mc/apps", "mc.app.create")]
     [InlineData("DELETE", "/proxy/api.bunny.net/mc/apps/abc", "mc.app.delete")]
     [InlineData("DELETE", "/proxy/api.bunny.net/database/v2/databases/x", "db.database.delete")]
@@ -77,7 +78,7 @@ public class RegistryAdditionsTests
     [Fact]
     public void EveryResponseWithEnvironmentValues_IsRedacted()
     {
-        foreach (var id in new[] { "mc.app.get", "mc.app.create", "mc.container.get", "mc.container.update", "mc.container.env.set" })
+        foreach (var id in new[] { "mc.app.get", "mc.app.create", "mc.app.update", "mc.container.get", "mc.container.update", "mc.container.env.set" })
             Assert.NotEmpty(_registry.GetAll().Single(o => o.OperationId == id).RedactJsonFields);
     }
 

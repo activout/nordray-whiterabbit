@@ -17,6 +17,9 @@ namespace Nordray.WhiteRabbit.Web.Proxy;
 /// change one and send them all back. White Rabbit shows them the values as <see cref="JsonRedaction.Placeholder"/>,
 /// so every value equal to the placeholder is replaced with the variable's current value, read upstream with the
 /// owner's key. The caller never sees the values, and writing a placeholder back can never overwrite a secret.</item>
+/// <item><b>Redacted app environment.</b> The same for a whole app (<c>PUT /mc/apps/{appId}</c>): each container's
+/// placeholders are restored from the current app's container with the same <c>id</c>, or else the same <c>name</c>.
+/// A placeholder that cannot be restored, or one anywhere else in the body, is refused.</item>
 /// </list>
 /// A refusal sets <see cref="LocalReasonItem"/>, so the audit record says White Rabbit answered, not Bunny.
 /// </summary>
@@ -24,6 +27,7 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
 {
     public const string RestoreMetadataKey = "RestoreRedactedEnvironmentFrom";
     public const string AllowedFieldsMetadataKey = "AllowedBodyFields";
+    public const string RestoreAppMetadataKey = "RestoreRedactedAppEnvironmentFrom";
 
     /// <summary>Why White Rabbit answered a request itself, for the audit record.</summary>
     public const string LocalReasonItem = "bunny.local-reason";
@@ -41,7 +45,8 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
             ? list.Split(';', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : null;
         var restoreFrom = metadata?.GetValueOrDefault(RestoreMetadataKey);
-        if (allowed is null && string.IsNullOrEmpty(restoreFrom))
+        var restoreAppFrom = metadata?.GetValueOrDefault(RestoreAppMetadataKey);
+        if (allowed is null && string.IsNullOrEmpty(restoreFrom) && string.IsNullOrEmpty(restoreAppFrom))
         {
             await next();
             return;
@@ -74,6 +79,8 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
 
         if (!string.IsNullOrEmpty(restoreFrom) && !await RestoreAsync(ctx, body, restoreFrom))
             return;
+        if (!string.IsNullOrEmpty(restoreAppFrom) && !await RestoreAppAsync(ctx, body, restoreAppFrom))
+            return;
 
         var bytes = Encoding.UTF8.GetBytes(body.ToJsonString());
         ctx.Request.Body = new MemoryStream(bytes);
@@ -97,7 +104,7 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
         var redacted = body.Where(p => p.Value!.GetValue<string>() == JsonRedaction.Placeholder).Select(p => p.Key).ToList();
         if (redacted.Count == 0) return true;
 
-        var current = await ReadCurrentAsync(ctx, sourceTemplate);
+        var current = await ReadCurrentAsync(ctx, sourceTemplate) is { } container ? Environment(container) : null;
         if (current is null)
         {
             await Refuse(ctx, 502, "current_environment_unavailable", """{"error":"current_environment_unavailable"}""");
@@ -114,6 +121,69 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
             body[name] = value;
         }
         return true;
+    }
+
+    /// <summary>Restores placeholders in an app's container environments; false when it wrote a refusal.</summary>
+    private async Task<bool> RestoreAppAsync(HttpContext ctx, JsonObject body, string sourceTemplate)
+    {
+        if (!ContainsPlaceholder(body)) return true;
+
+        var current = await ReadCurrentAsync(ctx, sourceTemplate);
+        if (current is null)
+        {
+            await Refuse(ctx, 502, "current_environment_unavailable", """{"error":"current_environment_unavailable"}""");
+            return false;
+        }
+        var currentContainers = (Property(current, "containerTemplates") as JsonArray ?? []).OfType<JsonObject>().ToList();
+
+        // Bunny matches property names case-insensitively, so this does too.
+        foreach (var container in (Property(body, "containerTemplates") as JsonArray ?? []).OfType<JsonObject>())
+        {
+            var variables = (Property(container, "environmentVariables") as JsonArray ?? []).OfType<JsonObject>().ToList();
+            if (!variables.Any(ContainsPlaceholder)) continue;
+
+            var key = Text(container, "id") is { } id ? ("id", id) : ("name", Text(container, "name"));
+            var match = key.Item2 is null ? null : currentContainers.FirstOrDefault(c => Text(c, key.Item1) == key.Item2);
+            var values = match is null ? [] : Environment(match);
+            foreach (var variable in variables)
+            {
+                var valueKey = variable.Select(p => p.Key).FirstOrDefault(k => string.Equals(k, "value", StringComparison.OrdinalIgnoreCase));
+                if (valueKey is null || Text(variable, "value") != JsonRedaction.Placeholder) continue;
+                if (Text(variable, "name") is { } name && values.TryGetValue(name, out var value))
+                    variable[valueKey] = value;
+            }
+        }
+
+        if (ContainsPlaceholder(body))
+        {
+            await Refuse(ctx, 400, "redacted_value_unknown",
+                """{"error":"redacted_value_unknown","detail":"A value sent as the redaction placeholder is not a current environment variable of a container with the same id or name. Send its real value."}""");
+            return false;
+        }
+        return true;
+    }
+
+    private static bool ContainsPlaceholder(JsonNode? node) => node switch
+    {
+        JsonObject o => o.Any(p => ContainsPlaceholder(p.Value)),
+        JsonArray a => a.Any(ContainsPlaceholder),
+        JsonValue v => v.GetValueKind() == JsonValueKind.String && v.GetValue<string>() == JsonRedaction.Placeholder,
+        _ => false,
+    };
+
+    private static JsonNode? Property(JsonObject o, string name) =>
+        o.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+
+    private static string? Text(JsonObject o, string name) =>
+        Property(o, name) is JsonValue v && v.GetValueKind() == JsonValueKind.String ? v.GetValue<string>() : null;
+
+    /// <summary>A container's variables by name.</summary>
+    private static Dictionary<string, string> Environment(JsonObject container)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in (Property(container, "environmentVariables") as JsonArray ?? []).OfType<JsonObject>())
+            if (Text(item, "name") is { } name && Text(item, "value") is { } value) result[name] = value;
+        return result;
     }
 
     /// <summary>The body as a JSON object; null (and whether it was too large) when it is not one.</summary>
@@ -133,8 +203,8 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
         }
     }
 
-    /// <summary>The container's current variables by name, or null when they cannot be read.</summary>
-    private async Task<Dictionary<string, string>?> ReadCurrentAsync(HttpContext ctx, string template)
+    /// <summary>The current object at the upstream path (a container or an app), or null when it cannot be read.</summary>
+    private async Task<JsonObject?> ReadCurrentAsync(HttpContext ctx, string template)
     {
         if (ctx.Items[BunnyProxyGate.AccessKeyItem] is not string apiKey) return null;
 
@@ -151,22 +221,7 @@ public sealed class ProxyRequestBodyPolicy(IForwarderHttpClientFactory clients)
         {
             using var response = await client.SendAsync(request, ctx.RequestAborted);
             if (!response.IsSuccessStatusCode) return null;
-            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ctx.RequestAborted));
-            var variables = doc.RootElement.EnumerateObject()
-                .FirstOrDefault(p => string.Equals(p.Name, "environmentVariables", StringComparison.OrdinalIgnoreCase));
-            var result = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (variables.Value.ValueKind != JsonValueKind.Array) return result;
-            foreach (var item in variables.Value.EnumerateArray())
-            {
-                string? name = null, value = null;
-                foreach (var p in item.EnumerateObject())
-                {
-                    if (string.Equals(p.Name, "name", StringComparison.OrdinalIgnoreCase)) name = p.Value.GetString();
-                    else if (string.Equals(p.Name, "value", StringComparison.OrdinalIgnoreCase)) value = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString() : null;
-                }
-                if (name is not null && value is not null) result[name] = value;
-            }
-            return result;
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(ctx.RequestAborted)) as JsonObject;
         }
         catch (Exception e) when (e is HttpRequestException or JsonException or InvalidOperationException or TaskCanceledException)
         {
