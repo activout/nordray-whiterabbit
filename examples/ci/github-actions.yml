@@ -25,7 +25,7 @@ jobs:
       - name: Install BunnyCLI and rabbit
         run: |
           npm install -g @bunny.net/cli@0.22.0
-          curl -fsSL "https://raw.githubusercontent.com/activout/Nordray.WhiteRabbit/$RABBIT_VERSION/scripts/install-rabbit.sh" | sh -s -- "$RABBIT_VERSION"
+          curl -fsSL "https://raw.githubusercontent.com/activout/nordray-whiterabbit/$RABBIT_VERSION/scripts/install-rabbit.sh" | sh -s -- "$RABBIT_VERSION"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: rabbit auth whoami
       - run: rabbit -- api GET /pullzone

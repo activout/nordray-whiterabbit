@@ -1,13 +1,13 @@
 ---
 name: rabbit
-description: Run bunny.net's BunnyCLI through a Nordray White Rabbit server with the `rabbit` CLI instead of holding the bunny.net API key, and manage CI workload bindings (`rabbit admin bindings`). Use when the user works with bunny.net through White Rabbit or rabbit, signs in to a White Rabbit environment, asks which capabilities a command needs, sets up a GitHub Actions or Forgejo Actions job to use rabbit, or adds, lists or removes a binding.
+description: Run bunny.net's BunnyCLI through a Nordray White Rabbit server with the `rabbit` CLI instead of holding the bunny.net API key, and manage CI workload bindings (`rabbit admin bindings`). Use when the user works with bunny.net through White Rabbit or rabbit, signs in to a White Rabbit environment, asks which capabilities a command needs, sets up a GitHub Actions or Forgejo Actions job to use rabbit, moves an existing workflow off its bunny.net API key, deploys a White Rabbit server on bunny.net, or adds, lists or removes a binding.
 ---
 
 # rabbit
 
 `rabbit -- <bunny arguments>` runs the official BunnyCLI (`bunny`) through a White Rabbit server. Neither the agent
 nor a CI job ever holds the real bunny.net API key. White Rabbit allows only the operations in its registry, and only
-with the capabilities of the credential (`--capabilities`) or CI binding. Details: `cli/README.md` in github.com/activout/Nordray.WhiteRabbit.
+with the capabilities of the credential (`--capabilities`) or CI binding. Details: `cli/README.md` in github.com/activout/nordray-whiterabbit.
 This file comes with rabbit: `rabbit skill install` updates it to match the installed version.
 
 ## Rules for the agent
@@ -93,6 +93,21 @@ A CI job does not request capabilities. It gets exactly those of the binding tha
 3. Install BunnyCLI and a pinned rabbit (`scripts/install-rabbit.sh <version>`), then run `rabbit -- …`.
 
 Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-actions.yml`. No secret goes into the repository.
+`rabbit admin bindings add` prints these lines for the new binding's workflow; copy them rather than writing your own.
+
+### Moving an existing workflow to rabbit
+
+1. Read the workflow and list every Bunny call: `bunny …`, curl or other HTTP with `AccessKey`, actions that take
+   the key (e.g. `BunnyWay/actions/*`). Map each to a capability from the table. If one has no capability (e.g.
+   `storage files`, or a 404 with `RABBIT_DEBUG=1`), tell the user and leave that step on its key; don't widen anything.
+2. Propose one binding with exactly those capabilities and the workflow's ref and trigger events; get the user's
+   confirmation, then run `rabbit admin bindings add`.
+3. Edit the workflow:
+   - add the OIDC permission and `RABBIT_SERVER` from the printed lines, and install BunnyCLI and a pinned rabbit;
+   - `bunny X` becomes `rabbit -- X`; curl calls become `rabbit -- api METHOD /path` (with `/mc` or `/database`);
+   - remove `BUNNYNET_API_KEY` / `--api-key` / `AccessKey` from the workflow.
+4. Open the change as a PR. It runs only from the bound ref, so the user merges and runs it, then checks
+   `rabbit admin audit --since 1h`. Only after a green run does the user delete the repository's Bunny key secret.
 
 ## Bindings
 
@@ -136,3 +151,17 @@ Good bindings:
 - only the capabilities that workflow uses, typically `mc.read` + `mc.deploy` for a container deploy;
 - `mc.manage`, `db.manage` and `db.token` only when the workflow really creates or deletes things or issues tokens;
 - removed when the workflow is retired.
+
+## Deploying a White Rabbit server on bunny.net
+
+Follow "Deploy on bunny.net, step by step" in the repository README (github.com/activout/nordray-whiterabbit). In
+short: a Bunny Database and its token, an encryption key, a Magic Containers app with one instance running a pinned
+digest of `ghcr.io/activout/nordray-whiterabbit` on port 8080, the `Federation__*` settings for the CI issuers, a
+hostname with HTTPS, then `/ready` returns 200.
+
+- This is the one step that needs the bunny.net API key itself, so the user runs BunnyCLI with their own key. Prefer
+  the SE region unless the user says otherwise.
+- Secrets (encryption key, database token, Mailjet keys) never go into a command line, a file in the repository or
+  a message: write them through files in `mktemp -d` and post them with curl and a header file, or use the user's
+  secrets loader.
+- Remind the user to store the encryption key safely: without it the stored bunny.net keys are lost.

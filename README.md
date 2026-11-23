@@ -206,6 +206,48 @@ White Rabbit runs as a single container (`white-rabbit` on port `8080`) on [bunn
 
 The run summary shows the digest. Deploy a pinned digest, not a moving tag. The image is generic: it holds no configuration, hostnames or secrets. Supply those as environment variables (see Configuration), for example from a secrets loader that you add as the entrypoint in your own image layer.
 
+### Deploy on bunny.net, step by step
+
+A one-time job, done by the owner on their own machine with [BunnyCLI](https://www.npmjs.com/package/@bunny.net/cli)
+and the bunny.net API key (the only time White Rabbit's setup needs it outside the server). Region SE is a fine
+default; pick one region and keep the app and database together.
+
+1. **Database:** `bunny db create` (one primary region), then a full-access token with
+   `bunny db tokens create <id> --no-save`. The connection string is
+   `Data Source=https://<database>.lite.bunnydb.net;Auth Token=<token>` (`https://`, not `libsql://`).
+   `bunny db create --output json` may return `id: null`; take the ID from `bunny db list`.
+2. **Secrets:** `openssl rand -base64 32` for `WhiteRabbit_DataProtection__EncryptionKey`. Store it with the database
+   backup: **losing it makes every stored bunny.net key unreadable.** Add the connection string, Mailjet keys and
+   sender, and `WhiteRabbit_Access__AllowedEmails__0` (who may sign in). Keep them out of shell history and
+   command lines: write them through files in `mktemp -d` or a secrets loader.
+3. **App:** a Magic Containers app (`POST /mc/apps`) with exactly one instance (`autoScaling {min: 1, max: 1}`),
+   one region, one container from a pinned digest of `ghcr.io/activout/nordray-whiterabbit` and an endpoint on
+   port 8080 through the CDN. Its environment holds the secrets above and these settings:
+   ```
+   ASPNETCORE_FORWARDEDHEADERS_ENABLED=true        # Bunny's CDN is the only way in
+   WhiteRabbit_Federation__Audience=whiterabbit:prod
+   WhiteRabbit_Federation__Issuers__0__Name=github
+   WhiteRabbit_Federation__Issuers__0__Kind=GitHub
+   WhiteRabbit_Federation__Issuers__0__Url=https://token.actions.githubusercontent.com
+   # Forgejo, e.g. Codebahn: Kind=Forgejo, Url=https://<forgejo host>/api/actions
+   ```
+   `bunny api` takes a body only on the command line, so post a body that carries secrets with curl and a header file
+   instead.
+4. **Hostname:** add your hostname to the endpoint's pull zone, point DNS at the pull zone, load a free certificate
+   and force HTTPS. The hostname is the server URL for `rabbit env add` and `RABBIT_SERVER`.
+5. **Check:** `curl https://<hostname>/ready` returns 200. Then `rabbit env add prod https://<hostname>`,
+   `rabbit auth login` and `rabbit admin key set`. Then delete the copies of the key in CI secrets as each workflow moves.
+
+### Moving a workflow to White Rabbit
+
+1. Find what the job does with Bunny: BunnyCLI, curl with `AccessKey`, or an action that takes the key. Map each call
+   to its capability (table above). An operation that is not supported stays where it is or waits for the registry.
+2. `rabbit admin bindings add` for that repository and workflow with only those capabilities. It prints the lines the
+   workflow needs: the OIDC permission (GitHub `id-token: write`, Forgejo `enable-openid-connect: true`),
+   `RABBIT_SERVER`, and installing BunnyCLI and a pinned rabbit.
+3. Replace `bunny …` with `rabbit -- …` and curl calls with `rabbit -- api METHOD /path`. Run the workflow from the
+   bound ref, check `rabbit admin audit --since 1h`, then delete the `BUNNYNET_API_KEY` secret from the repository.
+
 ## Project layout
 
 ```

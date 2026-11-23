@@ -20,13 +20,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/activout/nordray.whiterabbit/cli/internal/api"
-	"github.com/activout/nordray.whiterabbit/cli/internal/ci"
-	"github.com/activout/nordray.whiterabbit/cli/internal/config"
-	"github.com/activout/nordray.whiterabbit/cli/internal/login"
-	"github.com/activout/nordray.whiterabbit/cli/internal/passthrough"
-	"github.com/activout/nordray.whiterabbit/cli/internal/secrets"
-	"github.com/activout/nordray.whiterabbit/cli/internal/skill"
+	"github.com/activout/nordray-whiterabbit/cli/internal/api"
+	"github.com/activout/nordray-whiterabbit/cli/internal/ci"
+	"github.com/activout/nordray-whiterabbit/cli/internal/config"
+	"github.com/activout/nordray-whiterabbit/cli/internal/login"
+	"github.com/activout/nordray-whiterabbit/cli/internal/passthrough"
+	"github.com/activout/nordray-whiterabbit/cli/internal/secrets"
+	"github.com/activout/nordray-whiterabbit/cli/internal/skill"
 	"golang.org/x/term"
 )
 
@@ -759,6 +759,7 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 			ref = "(any ref)"
 		}
 		fmt.Fprintf(a.Stdout, "Created binding #%d for %s %s (%s).\n", created.Id, created.Repository, ref, created.WorkflowRef)
+		fmt.Fprint(a.Stdout, workflowSnippet(created, a.selected.URL))
 		return 0, nil
 	case "rm", "remove", "revoke":
 		if len(args) != 1 {
@@ -775,6 +776,29 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 		return 0, nil
 	}
 	return 2, usageError{"usage: rabbit admin bindings list | add ... | rm ID"}
+}
+
+// workflowSnippet is what a job matching binding b needs: an OIDC token, RABBIT_SERVER and a pinned rabbit.
+// A binding with a repository ID is GitHub's (it requires one); without, Forgejo's.
+func workflowSnippet(b *api.Binding, server string) string {
+	oidc := "permissions:\n  contents: read\n  id-token: write\n\njobs:\n  bunny:\n"
+	if b.RepositoryId == "" {
+		oidc = "jobs:\n  bunny:\n    enable-openid-connect: true   # Forgejo ignores GitHub-style permissions\n"
+	}
+	if b.Environment != "" {
+		oidc += "    environment: " + b.Environment + "\n"
+	}
+	install := "https://raw.githubusercontent.com/activout/nordray-whiterabbit/main/scripts/install-rabbit.sh | sh"
+	if Version != "dev" {
+		install = "https://raw.githubusercontent.com/activout/nordray-whiterabbit/" + Version + "/scripts/install-rabbit.sh | sh -s -- " + Version
+	}
+	return "\nIn " + strings.TrimSuffix(b.WorkflowRef, "@"+b.Ref) + ":\n\n" + oidc +
+		"    env:\n      RABBIT_SERVER: " + server + "\n" +
+		"    steps:\n      - run: |\n" +
+		"          npm install -g @bunny.net/cli@0.22.0\n" +
+		"          curl -fsSL " + install + "\n" +
+		"          echo \"$HOME/.local/bin\" >> \"$GITHUB_PATH\"\n" +
+		"      - run: rabbit -- <bunny arguments>   # instead of bunny with BUNNYNET_API_KEY\n"
 }
 
 // ---------------------------------------------------------------- passthrough

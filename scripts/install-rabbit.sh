@@ -6,12 +6,12 @@
 # Environment:
 #   RABBIT_INSTALL_DIR   where to put the binary (default: $HOME/.local/bin)
 #   RABBIT_RELEASE_BASE  release download base, for mirrors and tests
-#                        (default: https://github.com/activout/Nordray.WhiteRabbit/releases/download)
+#                        (default: https://github.com/activout/nordray-whiterabbit/releases/download)
 #
 # Pin a version in CI so a job always installs exactly what was reviewed.
 set -eu
 
-repo_url="https://github.com/activout/Nordray.WhiteRabbit"
+repo_url="https://github.com/activout/nordray-whiterabbit"
 base="${RABBIT_RELEASE_BASE:-$repo_url/releases/download}"
 install_dir="${RABBIT_INSTALL_DIR:-$HOME/.local/bin}"
 version="${1:-}"
