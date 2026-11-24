@@ -121,6 +121,8 @@ type Binding struct {
 	Capabilities      []string  `json:"capabilities"`
 	Sites             []string  `json:"sites,omitempty"`
 	SitePrefix        string    `json:"site_prefix,omitempty"`
+	Apps              []string  `json:"apps,omitempty"`
+	AppPrefix         string    `json:"app_prefix,omitempty"`
 	Description       string    `json:"description,omitempty"`
 	CreatedUtc        time.Time `json:"created_utc,omitempty"`
 }

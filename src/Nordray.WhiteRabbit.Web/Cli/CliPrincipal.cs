@@ -1,4 +1,5 @@
 using Nordray.WhiteRabbit.Core.Access;
+using Nordray.WhiteRabbit.Core.Federation;
 using Nordray.WhiteRabbit.Core.Models;
 using Nordray.WhiteRabbit.Core.Sites;
 using Nordray.WhiteRabbit.Bunny;
@@ -19,6 +20,14 @@ public sealed record CliPrincipal(CliSession Session, User Owner, WorkloadBindin
     public SiteScope? Sites => Session.PrincipalType == PrincipalTypes.Human
         ? SiteScope.Unrestricted
         : SiteScope.Of(NameList.Parse(Session.Sites));
+
+    /// <summary>
+    /// The Magic Containers apps the mc.* capabilities reach: every app (null) for a human and for a binding that names
+    /// no apps; else exactly the session's apps. A pull request binding without an app prefix reaches none.
+    /// </summary>
+    public AppScope? Apps => Binding is { } b && (BindingRules.IsPullRequestBinding(b) || NameList.Parse(b.Apps).Count > 0)
+        ? AppScope.Of(NameList.Parse(Session.Apps))
+        : null;
 
     public SecurityEvent Describe(string eventType, string outcome) => new()
     {

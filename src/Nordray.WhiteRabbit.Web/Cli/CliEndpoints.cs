@@ -138,7 +138,10 @@ public static class CliEndpoints
                 return await DenyExchange(audit, match.DenialReason!, identity.IssuerUrl, identity);
             var sites = BindingRules.SitesFor(match.Binding, identity);
             if (match.Binding.SitePrefix is not null && (sites.Count != 1 || !SiteScope.IsSiteName(sites[0])))
-                return await DenyExchange(audit, "preview_site_invalid", identity.IssuerUrl, identity);
+                return await DenyExchange(audit, "pull_request_site_invalid", identity.IssuerUrl, identity);
+            var apps = BindingRules.AppsFor(match.Binding, identity);
+            if (match.Binding.AppPrefix is not null && (apps is not { Count: 1 } || !AppScope.IsAppName(apps[0])))
+                return await DenyExchange(audit, "pull_request_app_invalid", identity.IssuerUrl, identity);
 
             session = NewSession(now, options.WorkloadSessionLifetime) with
             {
@@ -153,6 +156,7 @@ public static class CliEndpoints
                 Ref = identity.Ref,
                 RunId = identity.RunId,
                 Sites = sites.Count > 0 ? NameList.Format(sites) : null,
+                Apps = apps is { Count: > 0 } ? NameList.Format(apps) : null,
             };
         }
 
@@ -316,7 +320,9 @@ public static class CliEndpoints
         string[]? Capabilities,
         string? Description,
         string[]? Sites = null,
-        string? SitePrefix = null);
+        string? SitePrefix = null,
+        string[]? Apps = null,
+        string? AppPrefix = null);
 
     private static async Task<IResult> ListBindings(
         HttpContext ctx, IWorkloadBindingDao bindings, CliPrincipalResolver resolver, SecurityAudit audit)
@@ -359,6 +365,8 @@ public static class CliEndpoints
             Capabilities = NameList.Format(request.Capabilities ?? []),
             Sites = request.Sites is { Length: > 0 } siteList ? NameList.Format(siteList.Select(x => x.Trim())) : null,
             SitePrefix = Blank(request.SitePrefix),
+            Apps = request.Apps is { Length: > 0 } appList ? NameList.Format(appList.Select(x => x.Trim())) : null,
+            AppPrefix = Blank(request.AppPrefix),
             Description = Blank(request.Description),
             CreatedUtc = DateTime.UtcNow,
         };
@@ -495,6 +503,8 @@ public static class CliEndpoints
         Capabilities = p.Capabilities.Order(StringComparer.Ordinal),
         // Null for every site (a human); otherwise the only sites sites.* reaches.
         Sites = p.Sites?.Sites.Order(StringComparer.Ordinal),
+        // Null when mc.* reaches every app on the account.
+        Apps = p.Apps?.Apps.Order(StringComparer.Ordinal),
         SessionExpiresAt = p.Session.ExpiresUtc,
         HasBunnyKey = !string.IsNullOrEmpty(p.Owner.BunnyApiKey),
     };
@@ -514,6 +524,8 @@ public static class CliEndpoints
         Capabilities = NameList.Parse(b.Capabilities).Order(StringComparer.Ordinal),
         Sites = NameList.Parse(b.Sites).Order(StringComparer.Ordinal),
         b.SitePrefix,
+        Apps = NameList.Parse(b.Apps).Order(StringComparer.Ordinal),
+        b.AppPrefix,
         b.Description,
         b.CreatedUtc,
     };

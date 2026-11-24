@@ -181,15 +181,15 @@ public class SitesTests : CliFederationTests
     [InlineData($"{PreviewZone}/./index.html")]
     [InlineData($"{PreviewZone}/a%5C..%5C{ProdZone}")]
     public void StorageUri_StaysInsideTheCheckedZone(string zonePath) =>
-        Assert.Null(Nordray.WhiteRabbit.Web.Proxy.SitePolicy.StorageUri($"/proxy/storage/{StorageHost}/{zonePath}", "", StorageHost, PreviewZone));
+        Assert.Null(Nordray.WhiteRabbit.Web.Proxy.ScopePolicy.StorageUri($"/proxy/storage/{StorageHost}/{zonePath}", "", StorageHost, PreviewZone));
 
     [Fact]
     public void StorageUri_KeepsEncodingAndTrailingSlash()
     {
         Assert.Equal($"https://{StorageHost}/{PreviewZone}/deploys/a%20b.html?x=1",
-            Nordray.WhiteRabbit.Web.Proxy.SitePolicy.StorageUri($"/proxy/storage/{StorageHost}/{PreviewZone}/deploys/a%20b.html", "?x=1", StorageHost, PreviewZone)!.AbsoluteUri);
+            Nordray.WhiteRabbit.Web.Proxy.ScopePolicy.StorageUri($"/proxy/storage/{StorageHost}/{PreviewZone}/deploys/a%20b.html", "?x=1", StorageHost, PreviewZone)!.AbsoluteUri);
         Assert.Equal($"https://{StorageHost}/{PreviewZone}/",
-            Nordray.WhiteRabbit.Web.Proxy.SitePolicy.StorageUri($"/proxy/storage/{StorageHost}/{PreviewZone}/", "", StorageHost, PreviewZone)!.AbsoluteUri);
+            Nordray.WhiteRabbit.Web.Proxy.ScopePolicy.StorageUri($"/proxy/storage/{StorageHost}/{PreviewZone}/", "", StorageHost, PreviewZone)!.AbsoluteUri);
     }
 
     [Theory]

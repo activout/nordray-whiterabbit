@@ -60,8 +60,11 @@ There are no refresh tokens: sign in again when the session expires.
 | `sites.deploy` | Upload and delete site files, publish a deploy, purge | `sites deploy`, `sites deployments prune/publish` |
 | `sites.manage` | Create and delete sites | `sites create`, `sites delete` (per-PR previews) |
 
-Every capability applies to the whole account (`mc.deploy` can change any app), except `sites.*`: a binding's
-`sites.*` reach only the sites it names with `--site`, or one preview site per PR with `--site-prefix`. A human
+Every capability applies to the whole account, except:
+- `mc.*` on a binding with `--app NAME` reach only those apps (without `--app`, every app: `mc.deploy` can change any
+  app), or one preview app per PR with `--app-prefix`. With an app, `mc.manage` may also delete that app's CDN pull
+  zone, while the app exists.
+- `sites.*` reach only the sites a binding names with `--site`, or one preview site per PR with `--site-prefix`. A human
 session reaches every site. A site's zones are `sites-<site>-<suffix>`; a site imported with `--from-zone` keeps
 other names and is out of reach: recreate it with `bunny sites create` (deploy, then move its domain), or leave its
 workflow on the key.
@@ -119,6 +122,10 @@ Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-ac
    `rabbit admin audit --since 1h`. Only after a green run does the user delete the repository's Bunny key secret.
 
 Things that trip up a move (the README's "Moving a workflow to White Rabbit" has the full recipes):
+- **Preview apps for pull requests.** The same for Magic Containers: a pull request binding with
+  `--app-prefix NAME-pr-` and `mc.read` + `mc.manage` lets each PR create or replace `NAME-pr-<N>`; the cleanup job
+  deletes the app's CDN pull zone first (`containerTemplates[0].endpoints[0].pullZoneId`), then the app. Drop
+  `bunny whoami` steps from such workflows: `account.read` is not allowed on a pull request binding.
 - **Preview sites for pull requests.** Like Firebase Hosting's preview channels: each PR gets its own temporary site
   `NAME-pr-<N>` at its own URL, deployed on every push and deleted when the PR closes, so reviewers see the result
   before merging. The PR's jobs use a pull request binding (`--site-prefix NAME-pr-`), which reaches only that one
@@ -174,6 +181,9 @@ rabbit admin bindings rm 3
   `workflow_ref` must match it exactly.
 - `--event` defaults to `push` and `workflow_dispatch`. `pull_request` is refused except on a pull request binding.
 - `--site NAME` (repeatable) names the Bunny Sites the binding's `sites.*` capabilities reach; required with `sites.*`.
+- `--app NAME` (repeatable) limits the binding's `mc.*` to those apps. Prefer it for every container deploy.
+- `--app-prefix PREFIX` makes a pull request binding for preview apps: each job reaches only the app
+  `<prefix><PR number>`. It can be combined with `--site-prefix` in one binding.
 - `--site-prefix PREFIX` makes a pull request binding: only `pull_request` jobs (the default event then), no `--ref`, only
   `sites.*`, and each job reaches exactly the site `<prefix><PR number>`. Fork PRs get no OIDC token at all.
 - GitHub only: `--environment` and `--job-workflow-ref` narrow the binding further.

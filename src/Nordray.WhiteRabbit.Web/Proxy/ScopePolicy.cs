@@ -9,8 +9,9 @@ using Yarp.ReverseProxy.Model;
 namespace Nordray.WhiteRabbit.Web.Proxy;
 
 /// <summary>
-/// Keeps site-aware requests within the caller's Bunny Sites (<see cref="SiteAccess"/>, set by the gate), before they
-/// are forwarded:
+/// Keeps site-aware requests within the caller's Bunny Sites (<see cref="SiteAccess"/>) and app-aware requests within
+/// the caller's Magic Containers apps (<see cref="AppAccess"/>), both set by the gate, before they are forwarded.
+/// Sites:
 /// <list type="bullet">
 /// <item>A zone addressed by ID is read upstream with the owner's key; one outside the scope is "not found".</item>
 /// <item>A create must name a zone of one of the caller's sites, and a pull zone must use that site's storage zone.</item>
@@ -18,9 +19,12 @@ namespace Nordray.WhiteRabbit.Web.Proxy;
 /// <item>A storage request gets the zone's own password and region host, looked up by zone name. The caller only ever
 /// sees the redaction placeholder in place of the password.</item>
 /// </list>
+/// Apps: an app addressed by ID is read upstream and must be named in the scope; a create or replace must name one
+/// of them; an app's CDN pull zone may be deleted with mc.manage only while its app (Bunny's <c>MagicContainersAppId</c>)
+/// is within the scope.
 /// Lists are filtered to the scope after the response (<see cref="SiteResponses"/>).
 /// </summary>
-public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache cache)
+public sealed class ScopePolicy(IForwarderHttpClientFactory clients, IMemoryCache cache)
 {
     /// <summary>The checked upstream URI of a storage request, e.g. https://se.storage.bunnycdn.com/zone/path.</summary>
     public const string StorageUriItem = "bunny.storage-uri";
@@ -76,6 +80,8 @@ public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache
     /// <summary>Runs <paramref name="next"/> when the request stays within the scope, or writes an error and stops.</summary>
     public async Task InvokeAsync(HttpContext ctx, RouteModel route, Func<Task> next)
     {
+        if (ctx.Items[BunnyProxyGate.AppAccessItem] is AppAccess appAccess && !await CheckAppAsync(ctx, route, appAccess))
+            return;
         if (ctx.Items[BunnyProxyGate.SiteAccessItem] is not SiteAccess access)
         {
             await next();
@@ -168,6 +174,66 @@ public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache
         await next();
     }
 
+    /// <summary>True when the request stays within the app scope; otherwise writes the refusal.</summary>
+    private async Task<bool> CheckAppAsync(HttpContext ctx, RouteModel route, AppAccess access)
+    {
+        var ownerKey = ctx.Items[BunnyProxyGate.OwnerKeyItem] as string;
+        switch (Enum.Parse<AppResource>(route.Config.Metadata!["AppResource"]))
+        {
+            case AppResource.App:
+            {
+                var name = await AppNameAsync(ctx, ownerKey, RouteValue(ctx, "appId"));
+                if (!AppScope.Allows(access.Scope, name))
+                {
+                    await NotInScope(ctx);
+                    return false;
+                }
+                // A replace may not rename the app out of the scope.
+                if (HttpMethods.IsPut(ctx.Request.Method) && await ReadBodyAsync(ctx) is { } body
+                    && Text(body, "name") is { } newName && !AppScope.Allows(access.Scope, newName))
+                {
+                    await Refuse(ctx, 403, "app_not_in_scope", """{"error":"app_not_in_scope","detail":"The app's new name is not one of your apps."}""");
+                    return false;
+                }
+                return true;
+            }
+            case AppResource.AppCreate:
+            {
+                var body = await ReadBodyAsync(ctx);
+                if (!AppScope.Allows(access.Scope, body is null ? null : Text(body, "name")))
+                {
+                    await Refuse(ctx, 403, "app_not_in_scope", """{"error":"app_not_in_scope","detail":"The new app's name is not one of your apps."}""");
+                    return false;
+                }
+                return true;
+            }
+            case AppResource.AppPullZone:
+            {
+                var zone = await GetJsonAsync(ctx, ownerKey ?? "", "/pullzone/" + DigitsOrEmpty(RouteValue(ctx, "id"))) as JsonObject;
+                var appId = zone is null ? null : Text(zone, "MagicContainersAppId");
+                if (ownerKey is null || appId is not { Length: > 0 } || !AppScope.Allows(access.Scope, await AppNameAsync(ctx, ownerKey, appId)))
+                {
+                    await NotInScope(ctx);
+                    return false;
+                }
+                return true;
+            }
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>The name of the Magic Containers app with this ID, read upstream; null when there is none.</summary>
+    private async Task<string?> AppNameAsync(HttpContext ctx, string? ownerKey, string? appId)
+    {
+        if (ownerKey is null || appId is null || appId.Length > 100 || !appId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+            return null;
+        return await GetJsonAsync(ctx, ownerKey, "/mc/apps/" + appId) is JsonObject app ? Text(app, "name") : null;
+    }
+
+    private static string DigitsOrEmpty(string? value) =>
+        value is { Length: > 0 and <= 18 } && value.All(char.IsAsciiDigit) ? value : "";
+
     private async Task<bool> CheckBodyFieldsAsync(HttpContext ctx, IReadOnlyCollection<string> allowed)
     {
         var body = await ReadBodyAsync(ctx);
@@ -217,7 +283,7 @@ public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache
     {
         if (ownerKey is null) return null;
         // Keyed by the owner's key itself: zone names are unique across Bunny, but a cached password must never serve another owner.
-        var cacheKey = (nameof(SitePolicy), ownerKey, zoneName.ToLowerInvariant());
+        var cacheKey = (nameof(ScopePolicy), ownerKey, zoneName.ToLowerInvariant());
         if (cache.TryGetValue(cacheKey, out StorageZoneAccess? cached)) return cached;
 
         var list = await GetJsonAsync(ctx, ownerKey, "/storagezone?search=" + Uri.EscapeDataString(zoneName)) as JsonArray;

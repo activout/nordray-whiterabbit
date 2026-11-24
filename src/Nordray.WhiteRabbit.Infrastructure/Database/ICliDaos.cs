@@ -7,9 +7,9 @@ public interface IWorkloadBindingDao
 {
     [SqlQuery("""
         INSERT INTO WorkloadBindings (OwnerUserId, Issuer, Repository, RepositoryId, RepositoryOwnerId, Ref, WorkflowRef,
-                                      JobWorkflowRef, Environment, EventNames, Capabilities, Sites, SitePrefix, Description, CreatedUtc)
+                                      JobWorkflowRef, Environment, EventNames, Capabilities, Sites, SitePrefix, Apps, AppPrefix, Description, CreatedUtc)
         VALUES (@OwnerUserId, @Issuer, @Repository, @RepositoryId, @RepositoryOwnerId, @Ref, @WorkflowRef,
-                @JobWorkflowRef, @Environment, @EventNames, @Capabilities, @Sites, @SitePrefix, @Description, @CreatedUtc)
+                @JobWorkflowRef, @Environment, @EventNames, @Capabilities, @Sites, @SitePrefix, @Apps, @AppPrefix, @Description, @CreatedUtc)
         RETURNING Id
         """)]
     Task<long> InsertAsync([BindProperties] WorkloadBinding binding);
@@ -49,9 +49,9 @@ public interface ICliSessionDao
 {
     [SqlUpdate("""
         INSERT INTO CliSessions (Id, TokenHash, PrincipalType, UserId, Subject, Issuer, ClientId, BindingId, Repository,
-                                 RepositoryId, WorkflowRef, Ref, RunId, Sites, CreatedUtc, ExpiresUtc)
+                                 RepositoryId, WorkflowRef, Ref, RunId, Sites, Apps, CreatedUtc, ExpiresUtc)
         VALUES (@Id, @TokenHash, @PrincipalType, @UserId, @Subject, @Issuer, @ClientId, @BindingId, @Repository,
-                @RepositoryId, @WorkflowRef, @Ref, @RunId, @Sites, @CreatedUtc, @ExpiresUtc)
+                @RepositoryId, @WorkflowRef, @Ref, @RunId, @Sites, @Apps, @CreatedUtc, @ExpiresUtc)
         """)]
     Task InsertAsync([BindProperties] CliSession session);
 

@@ -62,6 +62,15 @@ public class SiteScopeTests
         Assert.False(SiteScope.IsSitePrefix("-pr-"));
     }
 
+    [Fact]
+    public void AppPrefix_LeavesRoomForAnyPullRequestNumber()
+    {
+        var longest = new string('a', AppScope.MaxAppNameLength - SiteScope.MaxPullRequestDigits);
+        Assert.True(AppScope.IsAppPrefix(longest));
+        Assert.True(AppScope.IsAppName(longest + "1234567890"));
+        Assert.False(AppScope.IsAppPrefix(longest + "a"));
+    }
+
     [Theory]
     [InlineData("refs/pull/12/head", "12")]
     [InlineData("refs/pull/12/merge", "12")]
@@ -168,6 +177,22 @@ public class PullRequestBindingTests
         var push = PullRequest("refs/heads/main") with { EventName = "push" };
         var binding = Preview() with { EventNames = "pull_request push" };
         Assert.Null(BindingRules.Match(push, [binding]).Binding);
+    }
+
+    [Fact]
+    public void Apps_ForAPullRequestBinding_AreItsPrsApp_OrNone()
+    {
+        Assert.Equal(["app-pr-12"], BindingRules.AppsFor(Preview() with { AppPrefix = "app-pr-" }, PullRequest()));
+        // A pull request binding without an app prefix reaches no app at all, never every app.
+        Assert.Equal([], BindingRules.AppsFor(Preview(), PullRequest()));
+    }
+
+    [Fact]
+    public void Apps_ForAPushBinding_AreItsApps_OrAccountWide()
+    {
+        var push = Preview() with { SitePrefix = null, EventNames = "push" };
+        Assert.Null(BindingRules.AppsFor(push, PullRequest()));
+        Assert.Equal(["a-app", "b-app"], BindingRules.AppsFor(push with { Apps = "b-app a-app" }, PullRequest()));
     }
 
     [Fact]

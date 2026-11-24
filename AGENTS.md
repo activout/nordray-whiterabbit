@@ -134,13 +134,15 @@ DELETE /proxy/api.bunny.net/pullzone/{id}   -> pullzone.write
 
 ## Authorisation model
 
-White Rabbit uses capability-based authorisation. There is no policy engine and no per-zone grant, with one exception: **Bunny Sites are scoped by site name.**
+White Rabbit uses capability-based authorisation. There is no policy engine and no per-zone grant, with two exceptions: **Bunny Sites are scoped by site name, and Magic Containers apps can be scoped by app name.**
 - A site's zones are named `sites-<site>-<6 characters>` by BunnyCLI (`SiteScope`). A binding with a `sites.*` capability names its sites (`--site`), and a session reaches only those; a human session reaches every site.
 - The `sites.*` operations (site storage zones, site files) never reach a zone that is not a site zone, for any caller.
 - Pull zone operations also accept a `sites.*` capability (`SiteCapability`). Granted that way, lists are filtered to the scope, an out-of-scope zone is 404, creates must name a scoped zone (a pull zone with that site's own storage zone as origin), and only `SiteAllowedBodyFields` are accepted. Granted through `pullzone.*`, they are account-wide as before.
-- `SitePolicy` checks the zone (read upstream by ID with the owner's key) before forwarding; `SiteResponses` filters lists.
+- `ScopePolicy` checks the zone (read upstream by ID with the owner's key) before forwarding; `SiteResponses` filters lists.
 
-**Pull request bindings** (`--site-prefix example-site-pr-`) are the only bindings that accept `pull_request`, and nothing else: no ref, exactly the `pull_request` event, only `sites.*` capabilities. The session's one site is `<prefix><PR number>`, taken from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). Fork PRs get no OIDC token from GitHub or Forgejo. A PR job may have changed its own workflow, so it must never reach anything but its own preview site.
+**Apps (`AppScope`, `AppResource` on each `/mc/apps…` operation).** A binding may name apps (`--app`); its `mc.*` then reach only those, and a binding without apps stays account-wide (unchanged). An app addressed by ID is read upstream and must be named in the scope (404 otherwise), a create or replace must name one of them, and the app list is filtered. `mc.manage` also stands in for `pullzone.write` on one operation (`AppCapability`): deleting the CDN pull zone Bunny made for an app's endpoint, found through the pull zone's `MagicContainersAppId`, while that app exists and is in scope.
+
+**Pull request bindings** (`--site-prefix example-site-pr-` and/or `--app-prefix example-app-pr-`) are the only bindings that accept `pull_request`, and nothing else: no ref, exactly the `pull_request` event, only `sites.*` with a site prefix and `mc.*` with an app prefix. The session's one site and/or one app is `<prefix><PR number>`, taken from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). Fork PRs get no OIDC token from GitHub or Forgejo. A PR job may have changed its own workflow, so it must never reach anything but its own preview site.
 
 **Deny by default.** If a route is not in the registry, return `404 Not Found`. If a route is in the registry but the client lacks the required capability, return `403 Forbidden`.
 
@@ -155,7 +157,7 @@ Per-request decision flow:
 4. Check auth-only or capability requirement; return 403 if not met. For site-aware operations, check the site scope (404 outside it)
 5. Construct target URI
 6. Apply header rules (see below)
-7. Inject bunny credential (for a site file: that storage zone's password, looked up by `SitePolicy`)
+7. Inject bunny credential (for a site file: that storage zone's password, looked up by `ScopePolicy`)
 8. Forward via YARP
 9. Write audit event
 
@@ -207,13 +209,13 @@ Requirements:
 `FriendlyName`, `Xml` (AES-256-GCM encrypted with `DataProtection:EncryptionKey`), `CreatedUtc`
 
 ### WorkloadBindings
-`Id`, `OwnerUserId`, `Issuer`, `Repository`, `RepositoryId`, `RepositoryOwnerId`, `Ref`, `WorkflowRef`, `JobWorkflowRef`, `Environment`, `EventNames`, `Capabilities`, `Sites`, `SitePrefix`, `Description`, `CreatedUtc`, `RevokedUtc`
+`Id`, `OwnerUserId`, `Issuer`, `Repository`, `RepositoryId`, `RepositoryOwnerId`, `Ref`, `WorkflowRef`, `JobWorkflowRef`, `Environment`, `EventNames`, `Capabilities`, `Sites`, `SitePrefix`, `Apps`, `AppPrefix`, `Description`, `CreatedUtc`, `RevokedUtc`
 
 ### CliLoginCodes
 `Id`, `CodeHash`, `CodeChallenge`, `UserId`, `CreatedUtc`, `ExpiresUtc`, `ConsumedUtc`
 
 ### CliSessions / VirtualCredentials
-Opaque tokens stored as SHA-256 hashes only (`TokenHash`, `KeyHash`), with principal, owner, binding, lifetime and revocation. A session's `Sites` are the sites its `sites.*` capabilities reach (NULL for a human: every site).
+Opaque tokens stored as SHA-256 hashes only (`TokenHash`, `KeyHash`), with principal, owner, binding, lifetime and revocation. A session's `Sites` are the sites its `sites.*` capabilities reach (NULL for a human: every site), and its `Apps` the apps its `mc.*` reach (see `CliPrincipal.Apps`: every app for a human and for a binding without apps).
 
 ### SecurityEvents
 Append-only audit trail; never holds tokens, keys, codes, query strings or bodies. Replaces the earlier `AuditEvents` table.
@@ -375,7 +377,7 @@ with ASP.NET Data Protection (purpose `BunnyApiKey.v1`, key ring in the database
 - never be written to logs or SecurityEvents
 - never be returned in any HTTP response body or header (`whoami` reports only `has_bunny_key`)
 
-`StorageZonePassword` is used for the files of a site's storage zone: `SitePolicy` looks the zone up by name with the
+`StorageZonePassword` is used for the files of a site's storage zone: `ScopePolicy` looks the zone up by name with the
 owner's key, injects its password as `AccessKey` and sends the request to the zone's own region host. Zone passwords
 (`Password`, `ReadOnlyPassword`) and pull zone secrets (`ZoneSecurityKey`, `AWSSigningKey`, `AWSSigningSecret`,
 `LogForwardingToken`, `Hostnames[].CertificateKey`) are redacted in every response. `StreamApiKey` is reserved.

@@ -64,7 +64,7 @@ builder.Services.AddScoped<SecurityAudit>();
 builder.Services.AddSingleton<BunnyProxyGate>();
 builder.Services.AddSingleton<ProxyRequestBodyPolicy>();
 builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<SitePolicy>();
+builder.Services.AddSingleton<ScopePolicy>();
 builder.Services.AddHttpContextAccessor();
 
 // --- Authentication ---
@@ -185,6 +185,8 @@ var bunnyRoutes = bunnyRegistry.GetAll().Select(op => new RouteConfig
         ["SiteCapability"] = op.SiteCapability ?? "",
         ["SiteResource"] = op.SiteResource.ToString(),
         ["SiteAllowedBodyFields"] = string.Join(';', op.SiteAllowedBodyFields ?? []),
+        ["AppResource"] = op.AppResource.ToString(),
+        ["AppCapability"] = op.AppCapability ?? "",
     },
 }).ToList();
 
@@ -207,6 +209,7 @@ builder.Services.AddReverseProxy()
         if (ctx.Route.RouteId.StartsWith("bunny.", StringComparison.Ordinal))
         {
             var siteResource = ctx.Route.Metadata?.GetValueOrDefault("SiteResource");
+            var appResource = ctx.Route.Metadata?.GetValueOrDefault("AppResource");
             var storageFile = siteResource == nameof(SiteResource.StorageFile);
             if (!storageFile) ctx.AddPathRemovePrefix("/proxy/api.bunny.net");
             // Same list as the rabbit CLI forwarder: no caller credential or identity reaches bunny.
@@ -218,8 +221,8 @@ builder.Services.AddReverseProxy()
                 if (storageFile)
                 {
                     // /proxy/storage/<host>/<zone>/<path> goes to https://<the zone's own region host>/<zone>/<path>,
-                    // as SitePolicy built and checked it.
-                    if (http.Items[SitePolicy.StorageUriItem] is not Uri uri)
+                    // as ScopePolicy built and checked it.
+                    if (http.Items[ScopePolicy.StorageUriItem] is not Uri uri)
                         throw new InvalidOperationException("Storage request without a checked storage URI.");
                     transform.ProxyRequest.RequestUri = uri;
                     transform.ProxyRequest.Headers.Host = uri.Host;
@@ -239,7 +242,10 @@ builder.Services.AddReverseProxy()
             var redact = ctx.Route.Metadata?.GetValueOrDefault("Redact") is { Length: > 0 } fields
                 ? fields.Split(';', StringSplitOptions.RemoveEmptyEntries)
                 : [];
-            if (redact.Length > 0)
+            // Lists reached within a site or app scope are filtered in the same pass, so they get the transform too.
+            var filtersList = siteResource is nameof(SiteResource.PullZoneList) or nameof(SiteResource.StorageZoneList)
+                || appResource == nameof(AppResource.AppList);
+            if (redact.Length > 0 || filtersList)
             {
                 ctx.AddRequestHeaderRemove("Accept-Encoding");
                 ctx.AddResponseTransform(async transform =>
@@ -252,6 +258,10 @@ builder.Services.AddReverseProxy()
                     if (redacted is not null && siteResource is nameof(SiteResource.PullZoneList) or nameof(SiteResource.StorageZoneList)
                         && transform.HttpContext.Items[BunnyProxyGate.SiteAccessItem] is SiteAccess access)
                         redacted = SiteResponses.Filter(redacted, name => SiteScope.Allows(access.Scope, name));
+                    // An app-scoped caller's app list shows only its apps.
+                    if (redacted is not null && appResource == nameof(AppResource.AppList)
+                        && transform.HttpContext.Items[BunnyProxyGate.AppAccessItem] is AppAccess apps)
+                        redacted = SiteResponses.Filter(redacted, name => AppScope.Allows(apps.Scope, name));
                     var response = transform.HttpContext.Response;
                     transform.SuppressResponseBody = true;
                     response.Headers.Remove("Content-Encoding");
@@ -348,7 +358,7 @@ app.MapRazorPages();
 // BunnyProxyGate enforces authentication (virtual credential), the sign-in allow-list, capabilities and server-side credential injection for bunny routes before YARP forwards the request.
 var bunnyGate = app.Services.GetRequiredService<BunnyProxyGate>();
 var bodyPolicy = app.Services.GetRequiredService<ProxyRequestBodyPolicy>();
-var sitePolicy = app.Services.GetRequiredService<SitePolicy>();
+var scopePolicy = app.Services.GetRequiredService<ScopePolicy>();
 app.MapReverseProxy(proxyPipeline =>
 {
     proxyPipeline.Use(async (ctx, next) =>
@@ -358,7 +368,7 @@ app.MapReverseProxy(proxyPipeline =>
         {
             // After the gate (which authorises and loads the owner's key): check the body's fields and restore
             // redacted environment values.
-            await bunnyGate.InvokeAsync(ctx, () => sitePolicy.InvokeAsync(ctx, route, () => bodyPolicy.InvokeAsync(ctx, route, () => next())), route);
+            await bunnyGate.InvokeAsync(ctx, () => scopePolicy.InvokeAsync(ctx, route, () => bodyPolicy.InvokeAsync(ctx, route, () => next())), route);
             return;
         }
 

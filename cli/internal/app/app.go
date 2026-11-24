@@ -726,13 +726,19 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 			if b.SitePrefix != "" {
 				fmt.Fprintf(a.Stdout, "    pull request sites: %s<PR number>\n", b.SitePrefix)
 			}
+			if len(b.Apps) > 0 {
+				fmt.Fprintf(a.Stdout, "    apps: %s\n", strings.Join(b.Apps, ","))
+			}
+			if b.AppPrefix != "" {
+				fmt.Fprintf(a.Stdout, "    pull request apps: %s<PR number>\n", b.AppPrefix)
+			}
 		}
 		return 0, nil
 	case "add":
 		fs := flag.NewFlagSet("admin bindings add", flag.ContinueOnError)
 		fs.SetOutput(a.Stderr)
 		var b api.Binding
-		var events, caps, sites multi
+		var events, caps, sites, apps multi
 		var workflow string
 		fs.StringVar(&b.Issuer, "issuer", "", "trusted issuer name, e.g. github or codebahn (required)")
 		fs.StringVar(&b.Repository, "repository", "", "owner/name (required)")
@@ -746,6 +752,8 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 		fs.Var(&events, "event", "allowed event, repeatable (default: push and workflow_dispatch)")
 		fs.Var(&caps, "capability", "capability to grant, repeatable")
 		fs.Var(&sites, "site", "Bunny Site the sites.* capabilities reach, repeatable")
+		fs.Var(&apps, "app", "Magic Containers app the mc.* capabilities reach, repeatable (without any: every app)")
+		fs.StringVar(&b.AppPrefix, "app-prefix", "", "pull request binding: pull_request jobs reach only the app <prefix><PR number>, e.g. example-app-pr-")
 		fs.StringVar(&b.SitePrefix, "site-prefix", "", "pull request binding: pull_request jobs reach only the site <prefix><PR number>, e.g. example-site-pr-")
 		fs.StringVar(&b.Description, "description", "", "free text")
 		if err := fs.Parse(args); err != nil {
@@ -757,8 +765,8 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 				b.WorkflowRef += "@" + b.Ref
 			}
 		}
-		b.Events, b.Capabilities, b.Sites = events, caps, sites
-		if b.SitePrefix != "" && len(b.Events) == 0 {
+		b.Events, b.Capabilities, b.Sites, b.Apps = events, caps, sites, apps
+		if (b.SitePrefix != "" || b.AppPrefix != "") && len(b.Events) == 0 {
 			b.Events = []string{"pull_request"} // the only event a pull request binding accepts
 		}
 		created, err := client.CreateBinding(ctx, token, b)

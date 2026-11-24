@@ -152,7 +152,10 @@ public sealed class BunnyOperationRegistry
             ConsentTitle: "Delete pull zone",
             ConsentDescription: "Delete a pull zone from the account.",
             SiteCapability: "sites.manage",
-            SiteResource: SiteResource.PullZone),
+            SiteResource: SiteResource.PullZone,
+            AppResource: AppResource.AppPullZone,
+            // An app's own CDN pull zone outlives the app; mc.manage may delete it while the app is still there.
+            AppCapability: "mc.manage"),
 
         new BunnyOperation(
             OperationId: "core.pullzone.purge",
@@ -441,7 +444,8 @@ public sealed class BunnyOperationRegistry
             RequiredCapability: "mc.read",
             RequiresAuthenticationOnly: false,
             ConsentTitle: "List container apps",
-            ConsentDescription: "Read the list of Magic Containers apps on the account."),
+            ConsentDescription: "Read the list of Magic Containers apps on the account.",
+            AppResource: AppResource.AppList),
 
         new BunnyOperation(
             OperationId: "mc.app.get",
@@ -454,7 +458,8 @@ public sealed class BunnyOperationRegistry
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Read container app",
             ConsentDescription: "Read a Magic Containers app's configuration. Environment variable values are redacted.",
-            RedactJsonFields: ["containerTemplates[].environmentVariables[].value"]),
+            RedactJsonFields: ["containerTemplates[].environmentVariables[].value"],
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.app.overview",
@@ -466,7 +471,8 @@ public sealed class BunnyOperationRegistry
             RequiredCapability: "mc.read",
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Read container app overview",
-            ConsentDescription: "Read a Magic Containers app's status overview."),
+            ConsentDescription: "Read a Magic Containers app's status overview.",
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.container.get",
@@ -479,7 +485,8 @@ public sealed class BunnyOperationRegistry
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Read container",
             ConsentDescription: "Read one container of a Magic Containers app. Environment variable values are redacted.",
-            RedactJsonFields: ["environmentVariables[].value"]),
+            RedactJsonFields: ["environmentVariables[].value"],
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.region.list",
@@ -520,7 +527,8 @@ public sealed class BunnyOperationRegistry
             RedactJsonFields: ["environmentVariables[].value"],
             // Only the image: environment variables need mc.env, and endpoints, volumes, probes and the entry point
             // are not covered by any capability.
-            AllowedBodyFields: ["image", "imageName", "imageNamespace", "imageTag", "imageDigest", "imageRegistryId", "imagePullPolicy"]),
+            AllowedBodyFields: ["image", "imageName", "imageNamespace", "imageTag", "imageDigest", "imageRegistryId", "imagePullPolicy"],
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.app.deploy",
@@ -532,7 +540,8 @@ public sealed class BunnyOperationRegistry
             RequiredCapability: "mc.deploy",
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Deploy container app",
-            ConsentDescription: "Deploy a Magic Containers app."),
+            ConsentDescription: "Deploy a Magic Containers app.",
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.app.restart",
@@ -544,7 +553,8 @@ public sealed class BunnyOperationRegistry
             RequiredCapability: "mc.deploy",
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Restart container app",
-            ConsentDescription: "Restart a Magic Containers app."),
+            ConsentDescription: "Restart a Magic Containers app.",
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.container.env.set",
@@ -558,7 +568,8 @@ public sealed class BunnyOperationRegistry
             ConsentTitle: "Set container environment variables",
             ConsentDescription: "Replace a container's environment variables. Values sent back redacted keep their current value; new values are never shown again.",
             RedactJsonFields: ["environmentVariables[].value"],
-            RestoreRedactedEnvironmentFrom: "/mc/apps/{appId}/containers/{containerId}"),
+            RestoreRedactedEnvironmentFrom: "/mc/apps/{appId}/containers/{containerId}",
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.app.create",
@@ -571,7 +582,8 @@ public sealed class BunnyOperationRegistry
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Create container app",
             ConsentDescription: "Create a Magic Containers app, e.g. a preview deployment.",
-            RedactJsonFields: ["containerTemplates[].environmentVariables[].value"]),
+            RedactJsonFields: ["containerTemplates[].environmentVariables[].value"],
+            AppResource: AppResource.AppCreate),
 
         new BunnyOperation(
             OperationId: "mc.app.update",
@@ -585,7 +597,8 @@ public sealed class BunnyOperationRegistry
             ConsentTitle: "Replace container app",
             ConsentDescription: "Replace a Magic Containers app's whole configuration: containers, images, environment variables, endpoints, scaling and regions. Values sent back redacted keep their current value.",
             RedactJsonFields: ["containerTemplates[].environmentVariables[].value"],
-            RestoreRedactedAppEnvironmentFrom: "/mc/apps/{appId}"),
+            RestoreRedactedAppEnvironmentFrom: "/mc/apps/{appId}",
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "mc.app.delete",
@@ -597,7 +610,8 @@ public sealed class BunnyOperationRegistry
             RequiredCapability: "mc.manage",
             RequiresAuthenticationOnly: false,
             ConsentTitle: "Delete container app",
-            ConsentDescription: "Delete a Magic Containers app and its containers, e.g. to clean up a preview deployment."),
+            ConsentDescription: "Delete a Magic Containers app and its containers, e.g. to clean up a preview deployment.",
+            AppResource: AppResource.App),
 
         new BunnyOperation(
             OperationId: "db.config.get",

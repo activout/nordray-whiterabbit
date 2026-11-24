@@ -31,6 +31,10 @@ public sealed record WorkloadBinding
     public string? Sites { get; init; }
     /// <summary>A pull request binding: pull_request jobs reach only the site <c>&lt;prefix&gt;&lt;PR number&gt;</c>.</summary>
     public string? SitePrefix { get; init; }
+    /// <summary>Space-separated app names the mc.* capabilities reach, or null for the whole account.</summary>
+    public string? Apps { get; init; }
+    /// <summary>A pull request binding: pull_request jobs reach only the app <c>&lt;prefix&gt;&lt;PR number&gt;</c>.</summary>
+    public string? AppPrefix { get; init; }
     public string? Description { get; init; }
     public DateTime CreatedUtc { get; init; }
     public DateTime? RevokedUtc { get; init; }
@@ -65,6 +69,8 @@ public sealed record CliSession
     public string? RunId { get; init; }
     /// <summary>Space-separated sites the session may touch with sites.*; null for every site (a human session).</summary>
     public string? Sites { get; init; }
+    /// <summary>Space-separated apps the session's mc.* capabilities reach (see <c>CliPrincipal.Apps</c>).</summary>
+    public string? Apps { get; init; }
     public DateTime CreatedUtc { get; init; }
     public DateTime ExpiresUtc { get; init; }
     public DateTime? RevokedUtc { get; init; }

@@ -90,7 +90,12 @@ Everything else, such as IDs and names, is returned unchanged. A successful resp
 
 **Each capability has one description**, in `BunnyOperationRegistry`, covering every operation it allows. `rabbit` and the capability table both show that text.
 
-**Deletes are explicit.** `mc.manage` and `db.manage` can delete any app or database on the account, not just ones they created. Grant them only to bindings that need them, e.g. a workflow that cleans up preview deployments.
+**Magic Containers apps can be scoped by name.** A binding with `--app NAME` (repeatable) reaches only those apps
+with its `mc.*` capabilities: the app list is filtered, other apps are "not found", and a create or replace must name
+one of them. A binding without `--app` stays account-wide. `mc.manage` may also delete the CDN pull zone Bunny made for
+one of those apps' endpoints (an app's pull zone outlives the app), while the app still exists.
+
+**Deletes are explicit.** Without `--app`, `mc.manage` and `db.manage` can delete any app or database on the account, not just ones they created. Grant them only to bindings that need them, and name the apps.
 
 **Left out on purpose:** log forwarding (its responses carry tokens), registry changes and single-registry reads, separate volume and endpoint changes (replacing the whole app with `mc.manage` covers them), and database groups and their tokens.
 
@@ -187,7 +192,7 @@ session, then asks for short-lived **virtual credentials** that only White Rabbi
   - Every field is matched exactly: issuer, repository, ref (`refs/heads/…` or `refs/tags/…` only) and `workflow_ref`, whose `@ref` must equal the ref.
   - The ref is optional. A binding without one accepts the workflow from any branch or tag, so the repository's own protections decide which refs are trusted: who may push which branches and tags, rulesets, and on GitHub a protected `environment` on the binding. The workflow must still come from the ref being built.
   - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never allowed, and `pull_request` only on a pull request binding.
-  - **Pull request bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own preview.
+  - **Pull request bindings** (`--site-prefix example-site-pr-`, `--app-prefix example-app-pr-`, or both) accept exactly the `pull_request` event, have no ref and hold only `sites.*` (with a site prefix) and `mc.*` (with an app prefix). The job reaches one site and/or one app, `<prefix><PR number>`, with the number from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own preview.
   - **GitHub** bindings also require the immutable `repository_id`, and optionally `repository_owner_id`, `environment` and `job_workflow_ref`.
   - **Forgejo** (tested on 15.0.12) does not issue IDs or environments. Its bindings match on names, so renaming or transferring a repository is a known risk. Forgejo's `ref_protected` claim is always `"false"` and is not used. Forgejo jobs must set `enable-openid-connect: true`.
   - Two matching bindings are refused as ambiguous.
@@ -322,6 +327,32 @@ if rabbit -- sites show "$SITE" > /dev/null 2>&1; then rabbit -- sites delete "$
 ```
 
 Production is the same `sites deploy` with `--site example-site`.
+
+**Preview apps for pull requests** work the same way for a Magic Containers app: each PR creates or replaces its own
+app `example-app-pr-<N>` with the PR's image, and closing the PR deletes it. The production deploy names its app.
+
+```sh
+rabbit admin bindings add --issuer codebahn --repository acme/example-app --workflow .github/workflows/deploy.yml \
+  --app example-app-master --capability mc.read --capability mc.manage --description "example-app production"
+rabbit admin bindings add --issuer codebahn --repository acme/example-app --workflow .github/workflows/deploy.yml \
+  --app-prefix example-app-pr- --capability mc.read --capability mc.manage --description "example-app previews"
+rabbit admin bindings add --issuer codebahn --repository acme/example-app --workflow .github/workflows/cleanup.yml \
+  --app-prefix example-app-pr- --capability mc.read --capability mc.manage --description "example-app preview cleanup"
+```
+
+One workflow may serve both production (`push` of a tag) and previews (`pull_request`): the two bindings never match
+the same job. Cleanup deletes the app's CDN pull zone **before** the app, because the pull zone can only be checked
+against its app while the app exists:
+
+```sh
+APP_ID=$(rabbit -- api GET /mc/apps --output json | jq -r --arg n "example-app-pr-$PR_NUMBER" '.items[] | select(.name == $n) | .id')
+PULL_ZONE_ID=$(rabbit -- api GET "/mc/apps/$APP_ID" --output json | jq -r '.containerTemplates[0].endpoints[0].pullZoneId // empty')
+[ -z "$PULL_ZONE_ID" ] || rabbit -- api DELETE "/pullzone/$PULL_ZONE_ID" --output json
+rabbit -- api DELETE "/mc/apps/$APP_ID" --output json
+```
+
+A preview app usually needs the same environment values as production (database credentials from CI secrets). They go
+in the app's body as before; White Rabbit only checks the app's name.
 
 Custom domains (`bunny sites domains`) and DNS stay manual: they need `pullzone.write` and `dns.write` on the whole account.
 
