@@ -94,7 +94,7 @@ public class RepositoryTests
 
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT EventType || '|' || Outcome || '|' || OperationId || '|' || ClientId || '|' || HttpStatus || '|' || UpstreamStatus FROM SecurityEvents";
-        Assert.Equal("proxy.request|allowed|core.statistics.get|example-client|200|200", await command.ExecuteScalarAsync());
+        Assert.Equal("proxy.request|allowed|core.statistics.get|example-client|200|200", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
