@@ -63,7 +63,8 @@ There are no refresh tokens: sign in again when the session expires.
 Every capability applies to the whole account (`mc.deploy` can change any app), except `sites.*`: a binding's
 `sites.*` reach only the sites it names with `--site`, or one preview site per PR with `--site-prefix`. A human
 session reaches every site. A site's zones are `sites-<site>-<suffix>`; a site imported with `--from-zone` keeps
-other names and is out of reach.
+other names and is out of reach: recreate it with `bunny sites create` (deploy, then move its domain), or leave its
+workflow on the key.
 
 Not possible through rabbit:
 - `storage files` on a zone that is not a Bunny Site's (it needs the zone password);

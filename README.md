@@ -325,6 +325,9 @@ Production is the same `sites deploy` with `--site example-site`.
 
 Custom domains (`bunny sites domains`) and DNS stay manual: they need `pullzone.write` and `dns.write` on the whole account.
 
+Sites imported with `bunny sites create --from-zone` keep their old zone names, so the `sites.*` capabilities cannot
+reach them. Recreate such a site with `bunny sites create`, deploy it and move its domain, or keep its workflow on the key.
+
 A workflow that creates or replaces the whole app (`POST /mc/apps`, `PUT /mc/apps/{id}`) needs `mc.manage`, which
 also lets it delete any app. When it sends environment values from CI secrets, prefer creating the app and its
 environment once by hand and patching only the image.
