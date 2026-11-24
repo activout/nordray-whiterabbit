@@ -172,6 +172,59 @@ public class SitesTests : CliFederationTests
         Assert.Empty(_storageRequests);
     }
 
+    [Theory]
+    [InlineData($"{PreviewZone}/../{ProdZone}/index.html")]
+    [InlineData($"{PreviewZone}/%2e%2e/{ProdZone}/index.html")]
+    [InlineData($"{PreviewZone}/%2E%2E/{ProdZone}/index.html")]
+    [InlineData($"{PreviewZone}/%252e%252e/{ProdZone}/index.html")]
+    [InlineData($"{PreviewZone}/a%2F..%2F..%2F{ProdZone}/index.html")]
+    [InlineData($"{PreviewZone}/./index.html")]
+    [InlineData($"{PreviewZone}/a%5C..%5C{ProdZone}")]
+    public void StorageUri_StaysInsideTheCheckedZone(string zonePath) =>
+        Assert.Null(Nordray.WhiteRabbit.Web.Proxy.SitePolicy.StorageUri($"/proxy/storage/{StorageHost}/{zonePath}", "", StorageHost, PreviewZone));
+
+    [Fact]
+    public void StorageUri_KeepsEncodingAndTrailingSlash()
+    {
+        Assert.Equal($"https://{StorageHost}/{PreviewZone}/deploys/a%20b.html?x=1",
+            Nordray.WhiteRabbit.Web.Proxy.SitePolicy.StorageUri($"/proxy/storage/{StorageHost}/{PreviewZone}/deploys/a%20b.html", "?x=1", StorageHost, PreviewZone)!.AbsoluteUri);
+        Assert.Equal($"https://{StorageHost}/{PreviewZone}/",
+            Nordray.WhiteRabbit.Web.Proxy.SitePolicy.StorageUri($"/proxy/storage/{StorageHost}/{PreviewZone}/", "", StorageHost, PreviewZone)!.AbsoluteUri);
+    }
+
+    [Theory]
+    [InlineData("%2e%2e")]
+    [InlineData("%2E%2E")]
+    [InlineData("%252e%252e")]
+    public async Task StorageTraversal_IsRefused_AndNeverForwarded(string dots)
+    {
+        var (_, key, _) = await PreviewKeyAsync();
+        var response = await SendAsync(HttpMethod.Put, $"/proxy/storage/{StorageHost}/{PreviewZone}/{dots}/{ProdZone}/index.html", key, raw: [1]);
+        Assert.True(response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound, response.StatusCode.ToString());
+        Assert.Empty(_storageRequests);
+    }
+
+    [Fact]
+    public async Task SiteDeploy_CanDetachButNeverAttachAnEdgeScript()
+    {
+        var (_, key, _) = await PreviewKeyAsync();
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/pullzone/11", key, """{"MiddlewareScriptId":0}""")).StatusCode);
+        foreach (var value in new[] { "5", "\"0\"", "null" })
+            Assert.Equal(HttpStatusCode.BadRequest, (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/pullzone/11", key, $$"""{"MiddlewareScriptId":{{value}}}""")).StatusCode);
+    }
+
+    [Fact]
+    public async Task StorageZoneUpdate_AnswerIsRedacted()
+    {
+        var (_, key, _) = await PreviewKeyAsync();
+        var inner = _upstream;
+        _upstream = request => request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/storagezone/101"
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StorageZone(StorageZones[1]).ToJsonString()) }
+            : inner(request);
+        var answer = await (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/storagezone/101", key, """{"Custom404FilePath":"/deploys/d1/404.html"}""")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("pw-preview-zone", answer);
+    }
+
     [Fact]
     public async Task StorageOnAnUnknownHost_IsNotFound()
     {
@@ -198,6 +251,9 @@ public class SitesTests : CliFederationTests
             """{"Name":"sites-example-site-pr-7-eeeeee","StorageZoneId":100,"OriginType":2}""")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/pullzone", key,
             """{"Name":"sites-example-site-pr-7-eeeeee","StorageZoneId":101,"OriginType":0}""")).StatusCode);
+        // Without OriginType, Bunny would pick its default origin, not the site's storage.
+        Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/pullzone", key,
+            """{"Name":"sites-example-site-pr-7-eeeeee","StorageZoneId":101}""")).StatusCode);
         // A field `bunny sites create` does not send.
         Assert.Equal(HttpStatusCode.BadRequest, (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/pullzone", key,
             """{"Name":"sites-example-site-pr-7-eeeeee","StorageZoneId":101,"OriginUrl":"https://example.com"}""")).StatusCode);

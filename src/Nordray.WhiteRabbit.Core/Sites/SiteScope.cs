@@ -39,12 +39,18 @@ public sealed partial class SiteScope
     public static bool Allows(SiteScope? scope, string? zoneName) =>
         scope is null ? SiteOf(zoneName) is not null : scope.Contains(zoneName);
 
-    /// <summary>BunnyCLI's rule for site names: 3 to 47 lowercase letters, digits and dashes.</summary>
+    /// <summary>BunnyCLI's rule for site names: 3 to 47 lowercase letters, digits and dashes, starting and ending with a letter or digit.</summary>
     public static bool IsSiteName(string? name) => name is not null && SiteName().IsMatch(name);
 
-    /// <summary>A preview prefix such as <c>example-site-pr-</c>; the PR number is appended to it.</summary>
+    /// <summary>Longest PR number <see cref="PullRequestNumber"/> accepts.</summary>
+    public const int MaxPullRequestDigits = 10;
+
+    /// <summary>
+    /// A pull request prefix such as <c>example-site-pr-</c>; the PR number is appended to it. Short enough that every
+    /// accepted PR number still gives a valid site name (at most 47 characters).
+    /// </summary>
     public static bool IsSitePrefix(string? prefix) =>
-        prefix is not null && prefix.Length is >= 2 and <= 40 && SitePrefix().IsMatch(prefix);
+        prefix is not null && prefix.Length is >= 2 and <= 47 - MaxPullRequestDigits && SitePrefix().IsMatch(prefix);
 
     /// <summary>The PR number of a pull request ref (<c>refs/pull/N/head</c> on Forgejo, <c>refs/pull/N/merge</c> on GitHub).</summary>
     public static string? PullRequestNumber(string? reference)
@@ -56,15 +62,16 @@ public sealed partial class SiteScope
 
     // The site name is greedy but must leave "-" + exactly six [a-z0-9] at the end, so "sites-example-site-pr-5-abc123"
     // belongs to "example-site-pr-5", never to "example-site".
-    [GeneratedRegex("^sites-(?<site>[a-z0-9-]{3,47})-[a-z0-9]{6}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^sites-(?<site>[a-z0-9][a-z0-9-]{1,45}[a-z0-9])-[a-z0-9]{6}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ZoneName();
 
-    [GeneratedRegex("^[a-z0-9-]{3,47}$", RegexOptions.CultureInvariant)]
+    // BunnyCLI's SITE_NAME_RE.
+    [GeneratedRegex("^[a-z0-9][a-z0-9-]{1,45}[a-z0-9]$", RegexOptions.CultureInvariant)]
     private static partial Regex SiteName();
 
     [GeneratedRegex("^[a-z0-9][a-z0-9-]*$", RegexOptions.CultureInvariant)]
     private static partial Regex SitePrefix();
 
-    [GeneratedRegex("^refs/pull/(?<number>[1-9][0-9]{0,9})/(head|merge)$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^refs/pull/(?<number>[1-9][0-9]{0,9})/(head|merge)$", RegexOptions.CultureInvariant)] // at most MaxPullRequestDigits
     private static partial Regex PullRef();
 }

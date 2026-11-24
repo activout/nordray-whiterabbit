@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -36,9 +37,10 @@ type Forwarder struct {
 	debug    io.Writer
 	upstream *url.URL
 
-	transport   http.RoundTripper
-	intercept   *interceptor
-	parentProxy *url.URL // the parent's HTTPS proxy, for tunnels rabbit does not intercept
+	transport        http.RoundTripper
+	intercept        *interceptor
+	parentProxy      *url.URL       // the parent's HTTPS proxy, for tunnels rabbit does not intercept
+	parentProxyRoots *x509.CertPool // nil: the system's roots (tests set their own)
 }
 
 // renewBefore is how long before expiry a virtual credential is replaced.

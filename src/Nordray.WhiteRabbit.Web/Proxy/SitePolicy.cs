@@ -22,8 +22,32 @@ namespace Nordray.WhiteRabbit.Web.Proxy;
 /// </summary>
 public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache cache)
 {
-    /// <summary>The storage host a storage request goes to, e.g. se.storage.bunnycdn.com.</summary>
-    public const string StorageHostItem = "bunny.storage-host";
+    /// <summary>The checked upstream URI of a storage request, e.g. https://se.storage.bunnycdn.com/zone/path.</summary>
+    public const string StorageUriItem = "bunny.storage-uri";
+
+    /// <summary>
+    /// The upstream URI for <c>/proxy/storage/&lt;host&gt;/&lt;zone&gt;/&lt;path&gt;</c> (the raw, still encoded path), or null
+    /// when the path is not plainly inside the zone: a <c>.</c> or <c>..</c> segment (also percent-encoded), an encoded
+    /// slash or backslash, or anything else that leaves the URI outside <c>/&lt;zone&gt;/</c>. Keeps the caller's encoding
+    /// and trailing slash (a directory listing).
+    /// </summary>
+    public static Uri? StorageUri(string rawPath, string query, string host, string zoneName)
+    {
+        const string prefix = "/proxy/storage/";
+        if (!rawPath.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var afterHost = rawPath.IndexOf('/', prefix.Length);
+        if (afterHost < 0) return null;
+        var zonePath = rawPath[afterHost..];
+        var segments = zonePath.Split('/');
+        if (segments.Length < 3 || segments[1] != zoneName) return null;
+        foreach (var segment in segments.Skip(1))
+        {
+            var decoded = Uri.UnescapeDataString(segment);
+            if (decoded is "." or ".." || decoded.Contains('/') || decoded.Contains('\\') || decoded.Contains('%')) return null;
+        }
+        if (!Uri.TryCreate($"https://{host}{zonePath}{query}", UriKind.Absolute, out var uri)) return null;
+        return uri.Host == host && uri.AbsolutePath.StartsWith("/" + zoneName + "/", StringComparison.Ordinal) ? uri : null;
+    }
 
     private const int MaxBodyBytes = 256 * 1024;
 
@@ -103,7 +127,7 @@ public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache
                     var storageZoneId = body is null ? null : Property(body, "StorageZoneId")?.ToString();
                     var storageName = await ZoneNameAsync(ctx, ownerKey, "/storagezone/", storageZoneId);
                     var originType = body is null ? null : Property(body, "OriginType")?.ToString();
-                    if (SiteScope.SiteOf(storageName) != SiteScope.SiteOf(name) || originType is not (null or "2"))
+                    if (SiteScope.SiteOf(storageName) != SiteScope.SiteOf(name) || originType != "2")
                     {
                         await Refuse(ctx, 403, "site_not_in_scope",
                             """{"error":"site_not_in_scope","detail":"A site's pull zone must use that site's own storage zone as its origin."}""");
@@ -128,8 +152,16 @@ public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache
                     await NotInScope(ctx);
                     return;
                 }
+                // The upstream URI is built and checked here, after the scope check, so nothing in the path can move
+                // the request to another zone than the one whose password it carries.
+                var uri = StorageUri(ctx.Request.Path.ToUriComponent(), ctx.Request.QueryString.ToUriComponent(), zone.Host, zoneName!);
+                if (uri is null)
+                {
+                    await Refuse(ctx, 400, "invalid_storage_path", """{"error":"invalid_storage_path"}""");
+                    return;
+                }
                 ctx.Items[BunnyProxyGate.AccessKeyItem] = zone.Password;
-                ctx.Items[StorageHostItem] = zone.Host;
+                ctx.Items[StorageUriItem] = uri;
                 break;
             }
         }
@@ -139,9 +171,12 @@ public sealed class SitePolicy(IForwarderHttpClientFactory clients, IMemoryCache
     private async Task<bool> CheckBodyFieldsAsync(HttpContext ctx, IReadOnlyCollection<string> allowed)
     {
         var body = await ReadBodyAsync(ctx);
+        // "Name" allows any value, "Name=value" only exactly that value.
+        var rules = allowed.Select(a => a.Split('=', 2)).ToDictionary(p => p[0], p => p.Length == 2 ? p[1] : null, StringComparer.OrdinalIgnoreCase);
         var refused = body is null
             ? ["(not a JSON object)"]
-            : body.Select(p => p.Key).Where(k => !allowed.Contains(k, StringComparer.OrdinalIgnoreCase)).Order(StringComparer.Ordinal).ToList();
+            : body.Where(p => !rules.TryGetValue(p.Key, out var only) || (only is not null && p.Value?.ToJsonString() != only))
+                .Select(p => p.Key).Order(StringComparer.Ordinal).ToList();
         if (refused.Count == 0) return true;
         await Refuse(ctx, 400, "body_field_not_allowed", JsonSerializer.Serialize(new
         {

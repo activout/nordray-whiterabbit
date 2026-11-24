@@ -28,7 +28,10 @@ public sealed record BunnyOperation(
     /// <summary>Which zone the request is about, for the site scope check. None for operations that are not site-aware.</summary>
     public SiteResource SiteResource { get; init; } = SiteResource;
 
-    /// <summary>Like <see cref="AllowedBodyFields"/>, but only when the operation was granted through <see cref="SiteCapability"/>.</summary>
+    /// <summary>
+    /// Like <see cref="AllowedBodyFields"/>, but only when the operation was granted through <see cref="SiteCapability"/>.
+    /// <c>Name=value</c> allows the field only with exactly that value.
+    /// </summary>
     public IReadOnlyList<string>? SiteAllowedBodyFields { get; init; } = SiteAllowedBodyFields;
 
     /// <summary>

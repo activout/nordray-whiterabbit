@@ -218,13 +218,11 @@ builder.Services.AddReverseProxy()
                 if (storageFile)
                 {
                     // /proxy/storage/<host>/<zone>/<path> goes to https://<the zone's own region host>/<zone>/<path>,
-                    // keeping the caller's encoding and trailing slash (a directory listing).
-                    if (http.Items[SitePolicy.StorageHostItem] is not string host)
-                        throw new InvalidOperationException("Storage request without a resolved storage host.");
-                    var raw = http.Request.Path.ToUriComponent();
-                    var zonePath = raw[raw.IndexOf('/', "/proxy/storage/".Length)..];
-                    transform.ProxyRequest.RequestUri = new Uri($"https://{host}{zonePath}{http.Request.QueryString.ToUriComponent()}");
-                    transform.ProxyRequest.Headers.Host = host;
+                    // as SitePolicy built and checked it.
+                    if (http.Items[SitePolicy.StorageUriItem] is not Uri uri)
+                        throw new InvalidOperationException("Storage request without a checked storage URI.");
+                    transform.ProxyRequest.RequestUri = uri;
+                    transform.ProxyRequest.Headers.Host = uri.Host;
                 }
                 else
                 {

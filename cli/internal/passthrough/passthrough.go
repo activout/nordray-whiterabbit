@@ -88,7 +88,7 @@ func ChildEnv(parent []string, apiURL, localKey, proxyURL, caFile string) []stri
 			upper == "HTTPS_PROXY", upper == "NODE_EXTRA_CA_CERTS":
 			continue
 		case upper == "NO_PROXY":
-			if value != "" {
+			if value = withoutStorageBypass(value); value != "" {
 				noProxy = value
 			}
 			continue
@@ -129,7 +129,9 @@ func Run(ctx context.Context, o Options) (int, error) {
 		return 1, err
 	}
 
-	forwarder.parentProxy = parentHTTPSProxy(o.Environ)
+	if forwarder.parentProxy, err = parentHTTPSProxy(o.Environ); err != nil {
+		return 1, err
+	}
 	caDir, caFile, err := forwarder.intercept.writeCAFile(envValue(o.Environ, "NODE_EXTRA_CA_CERTS"))
 	if err != nil {
 		return 1, fmt.Errorf("writing the storage CA: %w", err)

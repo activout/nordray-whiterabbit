@@ -219,16 +219,26 @@ func (f *Forwarder) serveStorage(host string, conn net.Conn) {
 	_ = server.Serve(&oneConnListener{conn: tlsConn})
 }
 
-// dialTunnel connects to target directly, or through the parent's HTTPS proxy with a CONNECT of its own.
+// dialTunnel connects to target directly, or through the parent's HTTPS proxy with a CONNECT of its own. An
+// https:// proxy is spoken to over TLS (port 443 by default), an http:// one in plain text (port 80 by default).
 func (f *Forwarder) dialTunnel(target string) (net.Conn, error) {
 	if f.parentProxy == nil {
 		return net.DialTimeout("tcp", target, 15*time.Second)
 	}
-	addr := f.parentProxy.Host
-	if f.parentProxy.Port() == "" {
-		addr = net.JoinHostPort(f.parentProxy.Hostname(), "80")
+	secure := f.parentProxy.Scheme == "https"
+	port := f.parentProxy.Port()
+	if port == "" {
+		port = map[bool]string{true: "443", false: "80"}[secure]
 	}
-	conn, err := net.DialTimeout("tcp", addr, 15*time.Second)
+	addr := net.JoinHostPort(f.parentProxy.Hostname(), port)
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	var conn net.Conn
+	var err error
+	if secure {
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: f.parentProxy.Hostname(), RootCAs: f.parentProxyRoots, MinVersion: tls.VersionTLS12})
+	} else {
+		conn, err = dialer.Dial("tcp", addr)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -253,21 +263,65 @@ func (f *Forwarder) dialTunnel(target string) (net.Conn, error) {
 	return &bufferedConn{Conn: conn, r: reader}, nil
 }
 
-// parentHTTPSProxy is the parent's HTTPS proxy, which tunnels that rabbit does not intercept still go through.
-func parentHTTPSProxy(environ []string) *url.URL {
+// parentHTTPSProxy is the parent's HTTPS proxy, which tunnels that rabbit does not intercept still go through. A
+// value without a scheme is http://; http and https proxies are supported, anything else (e.g. socks5) is refused
+// rather than silently bypassed.
+func parentHTTPSProxy(environ []string) (*url.URL, error) {
 	for _, name := range []string{"HTTPS_PROXY", "https_proxy"} {
 		for _, kv := range environ {
-			if value, ok := strings.CutPrefix(kv, name+"="); ok && value != "" {
-				if !strings.Contains(value, "://") {
-					value = "http://" + value
-				}
-				if u, err := url.Parse(value); err == nil && u.Host != "" {
-					return u
-				}
+			value, ok := strings.CutPrefix(kv, name+"=")
+			if !ok || value == "" {
+				continue
 			}
+			if !strings.Contains(value, "://") {
+				value = "http://" + value
+			}
+			u, err := url.Parse(value)
+			if err != nil || u.Hostname() == "" {
+				return nil, fmt.Errorf("%s is not a proxy URL rabbit understands", name)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return nil, fmt.Errorf("%s uses %s://, which rabbit does not support; use an http:// or https:// proxy", name, u.Scheme)
+			}
+			return u, nil
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+// withoutStorageBypass removes NO_PROXY entries that would let the child reach an Edge Storage host directly: "*",
+// and domains such as "bunnycdn.com", ".bunnycdn.com" or "*.storage.bunnycdn.com". The child would then send White
+// Rabbit's placeholder as the zone password. Every other entry is kept.
+func withoutStorageBypass(noProxy string) string {
+	var kept []string
+	for _, entry := range strings.Split(noProxy, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || bypassesStorage(entry) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return strings.Join(kept, ",")
+}
+
+func bypassesStorage(entry string) bool {
+	e := strings.ToLower(entry)
+	if e == "*" {
+		return true
+	}
+	if host, _, err := net.SplitHostPort(e); err == nil {
+		e = host
+	}
+	e = strings.TrimPrefix(strings.TrimPrefix(e, "*"), ".")
+	if e == "" {
+		return false
+	}
+	for host := range storageHosts {
+		if host == e || strings.HasSuffix(host, "."+e) {
+			return true
+		}
+	}
+	return false
 }
 
 func pipe(upstream, client net.Conn, buffered io.Reader) {

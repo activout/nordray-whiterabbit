@@ -135,11 +135,11 @@ public static class BindingRules
 
         var sites = NameList.Parse(b.Sites);
         foreach (var site in sites.Where(s => !SiteScope.IsSiteName(s)))
-            errors.Add($"site '{site}' is not a site name (3 to 47 lowercase letters, digits and dashes)");
+            errors.Add($"site '{site}' is not a site name (3 to 47 lowercase letters, digits and dashes, starting and ending with a letter or digit)");
         if (b.SitePrefix is not null)
         {
             if (!SiteScope.IsSitePrefix(b.SitePrefix))
-                errors.Add("site_prefix must be lowercase letters, digits and dashes, e.g. 'example-site-pr-'");
+                errors.Add($"site_prefix must be 2 to {47 - SiteScope.MaxPullRequestDigits} lowercase letters, digits and dashes, starting with a letter or digit, e.g. 'example-site-pr-'");
             if (sites.Count > 0) errors.Add("a pull request binding (site_prefix) cannot also name sites");
             if (b.Ref.Length > 0) errors.Add("a pull request binding (site_prefix) has no ref: pull request refs differ per PR");
             if (events.Count != 1 || !events.Contains(PullRequestEvent))

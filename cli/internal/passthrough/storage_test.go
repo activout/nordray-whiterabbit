@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -124,10 +125,64 @@ func TestRunCAOnlyVouchesForStorageHosts(t *testing.T) {
 }
 
 func TestParentHTTPSProxy(t *testing.T) {
-	if p := parentHTTPSProxy([]string{"https_proxy=proxy.corp:3128"}); p == nil || p.Host != "proxy.corp:3128" {
-		t.Errorf("got %v", p)
+	if p, err := parentHTTPSProxy([]string{"https_proxy=proxy.corp:3128"}); err != nil || p.Host != "proxy.corp:3128" || p.Scheme != "http" {
+		t.Errorf("got %v, %v", p, err)
 	}
-	if p := parentHTTPSProxy([]string{"HTTP_PROXY=http://x:1"}); p != nil {
+	if p, err := parentHTTPSProxy([]string{"HTTPS_PROXY=https://proxy.corp"}); err != nil || p.Scheme != "https" {
+		t.Errorf("got %v, %v", p, err)
+	}
+	if p, _ := parentHTTPSProxy([]string{"HTTP_PROXY=http://x:1"}); p != nil {
 		t.Errorf("HTTP_PROXY is not an HTTPS proxy, got %v", p)
+	}
+	if _, err := parentHTTPSProxy([]string{"HTTPS_PROXY=socks5://proxy.corp:1080"}); err == nil {
+		t.Error("an unsupported proxy scheme must be refused, not bypassed")
+	}
+}
+
+func TestNoProxyCannotBypassStorage(t *testing.T) {
+	got := withoutStorageBypass("*, .bunnycdn.com,bunnycdn.com,*.storage.bunnycdn.com,se.storage.bunnycdn.com:443, storage.bunnycdn.com,.corp.example,10.0.0.0/8,b-cdn.net")
+	if got != ".corp.example,10.0.0.0/8,b-cdn.net" {
+		t.Errorf("got %q", got)
+	}
+	env := strings.Join(ChildEnv([]string{"NO_PROXY=.bunnycdn.com,.corp.example"}, "http://127.0.0.1:1", "k", "http://p", "/ca"), "\n")
+	if !strings.Contains(env, "NO_PROXY=.corp.example,127.0.0.1,localhost,::1") || strings.Contains(env, "bunnycdn") {
+		t.Errorf("child NO_PROXY still bypasses storage:\n%s", env)
+	}
+}
+
+// An https:// parent proxy is spoken to over TLS: the tunnel to a non-storage host goes through it.
+func TestTunnelThroughAnHTTPSParentProxy(t *testing.T) {
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "origin") }))
+	defer target.Close()
+	var connects int
+	proxy := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
+			return
+		}
+		connects++
+		upstream, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		conn, buffered, _ := w.(http.Hijacker).Hijack()
+		conn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+		go pipe(upstream, conn, buffered.Reader)
+	}))
+	defer proxy.Close()
+
+	f := startStorageForwarder(t, func(w http.ResponseWriter, r *http.Request) { t.Error("not for White Rabbit") })
+	f.parentProxy, _ = url.Parse(proxy.URL) // https://127.0.0.1:<port>
+	f.parentProxyRoots = proxy.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+
+	response, err := childClient(t, f.ProxyURL(), target.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs).Get(target.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if string(body) != "origin" || connects != 1 {
+		t.Errorf("body %q, CONNECTs through the TLS proxy: %d", body, connects)
 	}
 }

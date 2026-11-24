@@ -136,8 +136,9 @@ public sealed class BunnyOperationRegistry
             RedactJsonFields: PullZoneSecrets,
             SiteCapability: "sites.deploy",
             SiteResource: SiteResource.PullZone,
-            // The site's cache settings, and detaching an edge script (BunnyCLI only ever sends 0 here).
-            SiteAllowedBodyFields: ["CacheControlMaxAgeOverride", "CacheControlPublicMaxAgeOverride", "MiddlewareScriptId"]),
+            // The site's cache settings, and detaching an edge script: MiddlewareScriptId only as 0, the value BunnyCLI
+            // sends, so a site deploy can never attach a script (which could rewrite or redirect the site's traffic).
+            SiteAllowedBodyFields: ["CacheControlMaxAgeOverride", "CacheControlPublicMaxAgeOverride", "MiddlewareScriptId=0"]),
 
         new BunnyOperation(
             OperationId: "core.pullzone.delete",
@@ -269,6 +270,7 @@ public sealed class BunnyOperationRegistry
             ConsentTitle: "Update site not-found page",
             ConsentDescription: "Set a site storage zone's not-found page, which a publish points at the live deploy.",
             AllowedBodyFields: ["Custom404FilePath", "Rewrite404To200"],
+            RedactJsonFields: StorageZoneSecrets,
             SiteResource: SiteResource.StorageZone),
 
         new BunnyOperation(

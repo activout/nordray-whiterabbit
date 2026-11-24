@@ -58,7 +58,9 @@ rabbit never falls back to talking to api.bunny.net directly.
 - `sites …` works with the `sites.*` capabilities. BunnyCLI uploads site files to Edge Storage itself; rabbit is its
   HTTPS proxy and terminates TLS for the Edge Storage hosts only, with a CA created for that run (set as
   `NODE_EXTRA_CA_CERTS`), and sends those requests to White Rabbit, which adds the zone password. Every other
-  connection is tunnelled unchanged, through your own `HTTPS_PROXY` if you have one.
+  connection is tunnelled unchanged, through your own `HTTPS_PROXY` if you have one (`http://` or `https://`; other
+  schemes are refused). `NO_PROXY` entries that would cover the Edge Storage hosts (`*`, `bunnycdn.com`, …) are left
+  out for BunnyCLI, so its storage requests always go through rabbit.
 - `storage files` on a zone that is not a Bunny Site's is not supported: White Rabbit never hands out zone passwords.
 - `db shell` works when the session has `db.token`. White Rabbit issues the database token, and BunnyCLI then connects to the database host directly with it.
 

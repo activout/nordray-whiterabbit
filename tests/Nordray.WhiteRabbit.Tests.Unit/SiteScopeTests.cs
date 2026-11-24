@@ -19,6 +19,8 @@ public class SiteScopeTests
     [InlineData("sites-example-site-a1b2c3d", null)]        // the six-character suffix must follow a dash
     [InlineData("sites-example-site-a1b2c_", null)]
     [InlineData("xsites-example-site-a1b2c3", null)]
+    [InlineData("sites--foo-a1b2c3", null)]            // a site name starts and ends with a letter or digit
+    [InlineData("sites-foo--a1b2c3", null)]
     [InlineData(null, null)]
     public void SiteOf_ReadsBunnyCliZoneNames(string? zone, string? site) => Assert.Equal(site, SiteScope.SiteOf(zone));
 
@@ -40,6 +42,24 @@ public class SiteScopeTests
         Assert.True(SiteScope.Allows(SiteScope.Unrestricted, "sites-any-site-a1b2c3"));
         Assert.False(SiteScope.Allows(SiteScope.Unrestricted, "my-private-storage"));
         Assert.False(SiteScope.Allows(SiteScope.Of([]), "sites-any-site-a1b2c3"));
+    }
+
+    [Theory]
+    [InlineData("example-site", true)]
+    [InlineData("abc", true)]
+    [InlineData("-example", false)]
+    [InlineData("example-", false)]
+    [InlineData("ab", false)]
+    public void SiteNames_FollowBunnyCli(string name, bool valid) => Assert.Equal(valid, SiteScope.IsSiteName(name));
+
+    [Fact]
+    public void SitePrefix_LeavesRoomForAnyPullRequestNumber()
+    {
+        var longest = new string('a', 37);
+        Assert.True(SiteScope.IsSitePrefix(longest));
+        Assert.True(SiteScope.IsSiteName(longest + "1234567890"));
+        Assert.False(SiteScope.IsSitePrefix(longest + "a"));
+        Assert.False(SiteScope.IsSitePrefix("-pr-"));
     }
 
     [Theory]
