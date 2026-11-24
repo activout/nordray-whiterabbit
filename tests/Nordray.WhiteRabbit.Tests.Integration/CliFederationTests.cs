@@ -961,6 +961,85 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         Assert.Empty(_upstreamRequests);
     }
 
+    private const string AppPath = "/proxy/api.bunny.net/mc/apps/app-1";
+
+    /// <summary>Upstream app with two containers holding secrets; PUT echoes a stored app back.</summary>
+    private void AppWithSecretsUpstream() => _upstream = request =>
+        request.Method == HttpMethod.Get
+            ? Json("""{"id":"app-1","containerTemplates":[{"id":"c-web","name":"web","environmentVariables":[{"name":"DB_TOKEN","value":"web-secret-1"}]},{"id":"c-job","name":"job","environmentVariables":[{"name":"DB_TOKEN","value":"job-secret-2"}]}]}""")
+            : Json("""{"id":"app-1","containerTemplates":[{"id":"c-web","name":"web","environmentVariables":[{"name":"DB_TOKEN","value":"web-secret-1"},{"name":"NEW","value":"new-secret-3"}]}]}""");
+
+    [Fact]
+    public async Task AppUpdate_PlaceholdersKeepTheirContainersValues_AndTheAnswerIsRedacted()
+    {
+        AppWithSecretsUpstream();
+        var key = await CredentialAsync(await HumanSessionAsync(), "mc.manage");
+
+        // A read app sent back: the web container by id, the job container by name only, in any property case.
+        var response = await SendWithKeyAsync(HttpMethod.Put, AppPath, key, """
+            {"name":"app","containerTemplates":[
+              {"id":"c-web","name":"web","imageTag":"v2","environmentVariables":[{"name":"DB_TOKEN","value":"[redacted by White Rabbit]"},{"name":"NEW","value":"new-secret-3"}]},
+              {"Name":"job","EnvironmentVariables":[{"Name":"DB_TOKEN","Value":"[redacted by White Rabbit]"}]}]}
+            """);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("https://api.bunny.net/mc/apps/app-1", _upstreamRequests[0].RequestUri!.ToString());
+        Assert.Equal(HttpMethod.Put, _upstreamRequests[1].Method);
+        var sent = _upstreamBodies[1];
+        Assert.DoesNotContain("[redacted by White Rabbit]", sent);
+        var containers = JsonNode.Parse(sent)!["containerTemplates"]!.AsArray();
+        Assert.Equal("web-secret-1", (string?)containers[0]!["environmentVariables"]![0]!["value"]);
+        Assert.Equal("new-secret-3", (string?)containers[0]!["environmentVariables"]![1]!["value"]);
+        Assert.Equal("job-secret-2", (string?)containers[1]!["EnvironmentVariables"]![0]!["Value"]);
+        Assert.Equal("v2", (string?)containers[0]!["imageTag"]);
+        Assert.DoesNotContain("web-secret-1", body);
+        Assert.DoesNotContain("new-secret-3", body);
+    }
+
+    [Fact]
+    public async Task AppUpdate_WithoutPlaceholders_IsForwardedUnchanged_WithoutReadingFirst()
+    {
+        AppWithSecretsUpstream();
+        var key = await CredentialAsync(await HumanSessionAsync(), "mc.manage");
+        var app = """{"name":"app","containerTemplates":[{"name":"web","environmentVariables":[{"name":"A","value":"b"}]}]}""";
+
+        Assert.Equal(HttpStatusCode.OK, (await SendWithKeyAsync(HttpMethod.Put, AppPath, key, app)).StatusCode);
+
+        Assert.Equal(HttpMethod.Put, Assert.Single(_upstreamRequests).Method);
+        Assert.Equal(JsonNode.Parse(app)!.ToJsonString(), JsonNode.Parse(_upstreamBodies[0])!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("""{"containerTemplates":[{"name":"other","environmentVariables":[{"name":"DB_TOKEN","value":"[redacted by White Rabbit]"}]}]}""")]
+    [InlineData("""{"containerTemplates":[{"id":"c-web","environmentVariables":[{"name":"OTHER","value":"[redacted by White Rabbit]"}]}]}""")]
+    [InlineData("""{"containerTemplates":[{"id":"c-web","environmentVariables":[{"name":"DB_TOKEN","value":"x","Value":"[redacted by White Rabbit]"}]}]}""")]
+    [InlineData("""{"name":"[redacted by White Rabbit]"}""")]
+    public async Task AppUpdate_PlaceholderThatCannotBeRestored_IsRefused(string app)
+    {
+        AppWithSecretsUpstream();
+        var key = await CredentialAsync(await HumanSessionAsync(), "mc.manage");
+
+        var response = await SendWithKeyAsync(HttpMethod.Put, AppPath, key, app);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("redacted_value_unknown", await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(_upstreamRequests, r => r.Method == HttpMethod.Put);
+    }
+
+    [Fact]
+    public async Task AppUpdate_WhenTheCurrentAppCannotBeRead_NothingIsWritten()
+    {
+        _upstream = _ => Json("""{"error":"nope"}""", HttpStatusCode.NotFound);
+        var key = await CredentialAsync(await HumanSessionAsync(), "mc.manage");
+
+        var response = await SendWithKeyAsync(HttpMethod.Put, AppPath, key,
+            """{"containerTemplates":[{"id":"c-web","environmentVariables":[{"name":"DB_TOKEN","value":"[redacted by White Rabbit]"}]}]}""");
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.DoesNotContain(_upstreamRequests, r => r.Method == HttpMethod.Put);
+    }
+
     [Fact]
     public async Task AppCreate_AnswerIsRedacted()
     {
@@ -984,6 +1063,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
     [InlineData("POST", "/proxy/api.bunny.net/mc/apps/app-1/restart", "mc.deploy")]
     [InlineData("PUT", "/proxy/api.bunny.net/mc/apps/app-1/containers/c-api/env", "mc.env")]
     [InlineData("POST", "/proxy/api.bunny.net/mc/apps", "mc.manage")]
+    [InlineData("PUT", "/proxy/api.bunny.net/mc/apps/app-1", "mc.manage")]
     [InlineData("DELETE", "/proxy/api.bunny.net/mc/apps/app-1", "mc.manage")]
     [InlineData("DELETE", "/proxy/api.bunny.net/database/v2/databases/db-1", "db.manage")]
     public async Task NewOperations_NeedTheirOwnCapability(string method, string path, string capability)

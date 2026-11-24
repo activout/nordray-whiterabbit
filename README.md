@@ -54,7 +54,7 @@ The same `rabbit -- …` works at your own terminal, so an AI agent can run Bunn
 | Magic Containers | List and get apps, app overview, get container, regions, list registries | `mc.read` |
 | Magic Containers | Change a container's image, deploy, restart | `mc.deploy` |
 | Magic Containers | Set a container's environment variables | `mc.env` |
-| Magic Containers | Create and delete apps, e.g. preview deployments | `mc.manage` |
+| Magic Containers | Create, replace (`PUT /mc/apps/{id}`) and delete apps, e.g. preview deployments | `mc.manage` |
 | Bunny Database | Configuration, limits, optimal regions, list and get databases, database status | `db.read` |
 | Bunny Database | Create and delete databases | `db.manage` |
 | Bunny Database | Create a database access token (the token itself gives direct access to that database) | `db.token` |
@@ -67,13 +67,15 @@ Everything else, such as IDs and names, is returned unchanged. A successful resp
 
 **Setting environment variables keeps redacted values.** Setting a container's environment replaces all of its variables, and tools such as `bunny apps env set` send back every variable they read. White Rabbit gave them the placeholder, so before forwarding, each value equal to `[redacted by White Rabbit]` is replaced with that variable's current value, read with the owner's key. A placeholder for a variable the container does not have is refused (400). If the current values cannot be read, nothing is written (502). So `mc.env` can add, change and remove variables without ever reading one.
 
+**Replacing an app keeps redacted values too.** `PUT /mc/apps/{id}` replaces the whole app, and a workflow that reads the app, changes it and sends it back sends the placeholders back. Each placeholder in a container's `environmentVariables` gets that variable's current value from the current app's container with the same `id` (or, without one, the same `name`). A placeholder that matches no current variable, or one anywhere else in the body, is refused (400). If the current app cannot be read, nothing is written (502).
+
 **`mc.deploy` changes only the image.** Bunny's container update also accepts environment variables, endpoints, volumes, probes and the entry point. White Rabbit forwards only the image fields and refuses any other field (400), even when it is null or empty.
 
 **Each capability has one description**, in `BunnyOperationRegistry`, covering every operation it allows. `rabbit` and the capability table both show that text.
 
 **Deletes are explicit.** `mc.manage` and `db.manage` can delete any app or database on the account, not just ones they created. Grant them only to bindings that need them, e.g. a workflow that cleans up preview deployments.
 
-**Left out on purpose:** log forwarding (its responses carry tokens), registry changes and single-registry reads, volume and endpoint changes, and database groups and their tokens.
+**Left out on purpose:** log forwarding (its responses carry tokens), registry changes and single-registry reads, separate volume and endpoint changes (replacing the whole app with `mc.manage` covers them), and database groups and their tokens.
 
 New endpoints require a code review and an explicit entry in `BunnyOperationRegistry`. Bunny's OpenAPI specs are used for reference only — presence in the spec does not make an endpoint automatically available.
 
@@ -247,6 +249,36 @@ default; pick one region and keep the app and database together.
    `RABBIT_SERVER`, and installing BunnyCLI and a pinned rabbit.
 3. Replace `bunny …` with `rabbit -- …` and curl calls with `rabbit -- api METHOD /path`. Run the workflow from the
    bound ref, check `rabbit admin audit --since 1h`, then delete the `BUNNYNET_API_KEY` secret from the repository.
+
+**A deploy that only changes the image** needs `mc.read` + `mc.deploy`, not `mc.manage`. Find the app, the registry
+and the container, then patch only the image fields:
+
+```sh
+APP_ID=$(rabbit -- api GET /mc/apps --output json | jq -r --arg n "$APP_NAME" '.items[] | select(.name == $n) | .id')
+REGISTRY_ID=$(rabbit -- api GET /mc/registries --output json | jq -r '.items[] | select(.hostName == "codebahn.net" and .isPublic == false) | .id')
+CONTAINER_ID=$(rabbit -- api GET "/mc/apps/$APP_ID" --output json | jq -r '.containerTemplates[] | select(.name == "web") | .id')
+rabbit -- api PATCH "/mc/apps/$APP_ID/containers/$CONTAINER_ID" --output json \
+  --body "$(jq -n --arg tag "$TAG" --arg r "$REGISTRY_ID" '{imageTag: $tag, imageRegistryId: $r, imageNamespace: "acme", imageName: "app"}')"
+```
+
+A workflow that creates or replaces the whole app (`POST /mc/apps`, `PUT /mc/apps/{id}`) needs `mc.manage`, which
+also lets it delete any app. When it sends environment values from CI secrets, prefer creating the app and its
+environment once by hand and patching only the image.
+
+**A short-lived database token**, e.g. for a script that writes to a Bunny Database, needs `db.read` + `db.token`:
+
+```sh
+echo "BUNNY_DATABASE_URL=$BUNNY_DATABASE_URL" > .env   # or pass the db_… ID as an argument
+BUNNY_DATABASE_AUTH_TOKEN=$(rabbit -- db tokens create --expiry 1h --no-save --force --output json | jq -r .token)
+echo "::add-mask::$BUNNY_DATABASE_AUTH_TOKEN"
+export BUNNY_DATABASE_AUTH_TOKEN
+```
+
+- Always pass `--expiry`: without it the token is full access and never expires, so every run leaves one behind.
+- rabbit removes `BUNNY_*` variables before it starts BunnyCLI, and BunnyCLI finds the database from a `.env` file
+  (matched exactly against the URLs Bunny lists), not from the environment.
+- With `--output json` only the JSON (`token`, `expires_at`, `db_id`, `authorization`) goes to stdout.
+- `rabbit -- db migrations apply --force` without `--token` creates its own 30-minute token, with the same capabilities.
 
 ## Project layout
 

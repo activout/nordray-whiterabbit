@@ -52,7 +52,7 @@ There are no refresh tokens: sign in again when the session expires.
 | `mc.read` | Read apps, containers, regions, registries. Environment values are **redacted** | `apps list`, `apps show` |
 | `mc.deploy` | Change a container's image, deploy, restart | the deploy step of a pipeline |
 | `mc.env` | Replace environment variables (current values are never shown) | `apps env set/remove` |
-| `mc.manage` | Create and delete apps | preview deployments |
+| `mc.manage` | Create, replace (`PUT /mc/apps/{id}`) and delete apps | preview deployments, a deploy that sends the whole app |
 | `db.read` | Read databases, limits, regions, status | `db list`, `db show` |
 | `db.manage` | Create and delete databases | |
 | `db.token` | Create database tokens | `db tokens create`, `db shell` |
@@ -108,6 +108,20 @@ Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-ac
    - remove `BUNNYNET_API_KEY` / `--api-key` / `AccessKey` from the workflow.
 4. Open the change as a PR. It runs only from the bound ref, so the user merges and runs it, then checks
    `rabbit admin audit --since 1h`. Only after a green run does the user delete the repository's Bunny key secret.
+
+Things that trip up a move (the README's "Moving a workflow to White Rabbit" has the full recipes):
+- **Deploys.** A "create or update the app" step (`POST /mc/apps`, `PUT /mc/apps/{id}` with the whole app, often with
+  environment values from CI secrets) needs `mc.manage`. Usually better: `mc.read` + `mc.deploy`, and patch only the
+  image (`PATCH /mc/apps/{id}/containers/{cid}` with `imageTag`, `imageRegistryId`, `imageNamespace`, `imageName`);
+  the app and its environment are set once by hand. Say which you chose and why.
+- **Database tokens.** A step that uses a stored database token can mint one per run with `db.read` + `db.token`:
+  `rabbit -- db tokens create --expiry 1h --no-save --force --output json | jq -r .token`, then `::add-mask::` it.
+  Always pass `--expiry` (the default never expires). The database comes from the `db_…` ID or from
+  `BUNNY_DATABASE_URL` in a `.env` file; rabbit removes `BUNNY_*` environment variables before BunnyCLI starts.
+  `rabbit -- db migrations apply --force` without `--token` mints its own 30-minute token.
+- **The workflow path.** `--workflow` is the path the forge runs: Codebahn and other Forgejo servers run
+  `.github/workflows/` when there is no `.forgejo/workflows/`.
+- **Tags.** A deploy on `v*` tags needs a binding without `--ref`; the repository's tag protection then decides.
 
 ## Bindings
 
