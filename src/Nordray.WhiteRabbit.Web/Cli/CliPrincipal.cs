@@ -1,5 +1,6 @@
 using Nordray.WhiteRabbit.Core.Access;
 using Nordray.WhiteRabbit.Core.Models;
+using Nordray.WhiteRabbit.Core.Sites;
 using Nordray.WhiteRabbit.Bunny;
 using Nordray.WhiteRabbit.Infrastructure.Database;
 
@@ -11,6 +12,14 @@ namespace Nordray.WhiteRabbit.Web.Cli;
 /// </summary>
 public sealed record CliPrincipal(CliSession Session, User Owner, WorkloadBinding? Binding, IReadOnlySet<string> Capabilities)
 {
+    /// <summary>
+    /// The sites the sites.* capabilities reach: every site for a human (null), else exactly the session's sites, so a
+    /// workload session without any never reaches a site.
+    /// </summary>
+    public SiteScope? Sites => Session.PrincipalType == PrincipalTypes.Human
+        ? SiteScope.Unrestricted
+        : SiteScope.Of(NameList.Parse(Session.Sites));
+
     public SecurityEvent Describe(string eventType, string outcome) => new()
     {
         EventType = eventType,

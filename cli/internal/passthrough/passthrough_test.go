@@ -29,7 +29,7 @@ func TestMapPath(t *testing.T) {
 		"/region":                       "/region", // core API, singular
 		"/appsx":                        "/appsx",
 		"/pullzone":                     "/pullzone",
-		"/mc/apps":                      "/mc/apps",      // bunny api, already prefixed
+		"/mc/apps":                      "/mc/apps", // bunny api, already prefixed
 		"/database/v2/databases":        "/database/v2/databases",
 		"":                              "/",
 	}
@@ -56,16 +56,19 @@ func TestChildEnvRemovesCredentialsAndPinsLoopback(t *testing.T) {
 		"HTTPS_PROXY=http://proxy:3128",
 		"NO_PROXY=.corp.example",
 	}
-	got := ChildEnv(parent, "http://127.0.0.1:5000", "rabbit-local-x")
+	got := ChildEnv(parent, "http://127.0.0.1:5000", "rabbit-local-x", "http://rabbit:rabbit-local-x@127.0.0.1:5000", "/tmp/rabbit-ca/ca.pem")
 	joined := "\n" + strings.Join(got, "\n") + "\n"
-	for _, secret := range []string{"real-key", "zone-password", "ghs_x", "FORGEJO_TOKEN", "ACTIONS_ID_TOKEN", "ACTIONS_RUNTIME", "RABBIT_SERVER", "https://api.bunny.net"} {
+	for _, secret := range []string{"real-key", "zone-password", "ghs_x", "FORGEJO_TOKEN", "ACTIONS_ID_TOKEN", "ACTIONS_RUNTIME", "RABBIT_SERVER", "https://api.bunny.net", "proxy:3128"} {
 		if strings.Contains(joined, secret) {
 			t.Errorf("child environment still contains %q", secret)
 		}
 	}
 	for _, want := range []string{
 		"\nPATH=/usr/bin\n",
-		"\nHTTPS_PROXY=http://proxy:3128\n",
+		// The forwarder is the child's HTTPS proxy; it tunnels everything but Edge Storage through the parent's.
+		"\nHTTPS_PROXY=http://rabbit:rabbit-local-x@127.0.0.1:5000\n",
+		"\nhttps_proxy=http://rabbit:rabbit-local-x@127.0.0.1:5000\n",
+		"\nNODE_EXTRA_CA_CERTS=/tmp/rabbit-ca/ca.pem\n",
 		"\nBUNNYNET_API_URL=http://127.0.0.1:5000\n",
 		"\nBUNNYNET_API_KEY=rabbit-local-x\n",
 		"\nBUNNYNET_DASHBOARD_URL=http://127.0.0.1:1\n",

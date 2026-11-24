@@ -35,6 +35,10 @@ type Forwarder struct {
 	source   CredentialSource
 	debug    io.Writer
 	upstream *url.URL
+
+	transport   http.RoundTripper
+	intercept   *interceptor
+	parentProxy *url.URL // the parent's HTTPS proxy, for tunnels rabbit does not intercept
 }
 
 // renewBefore is how long before expiry a virtual credential is replaced.
@@ -50,25 +54,26 @@ func StartForwarder(server string, source CredentialSource, transport http.Round
 	if err != nil {
 		return nil, fmt.Errorf("cannot listen on 127.0.0.1: %w", err)
 	}
+	intercept, err := newInterceptor()
+	if err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("creating the storage CA: %w", err)
+	}
 	f := &Forwarder{
-		URL:      "http://" + listener.Addr().String(),
-		LocalKey: "rabbit-local-" + randomString(32),
-		listener: listener,
-		source:   source,
-		debug:    debug,
-		upstream: upstream,
+		URL:       "http://" + listener.Addr().String(),
+		LocalKey:  "rabbit-local-" + randomString(32),
+		listener:  listener,
+		source:    source,
+		debug:     debug,
+		upstream:  upstream,
+		transport: transport,
+		intercept: intercept,
 	}
 	proxy := &httputil.ReverseProxy{
-		Rewrite:   f.rewrite,
-		Transport: transport,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			f.logf("rabbit: forwarding %s %s failed: %v", r.Method, r.URL.Path, err)
-			writeJSON(w, http.StatusBadGateway, `{"error":"rabbit_forwarding_failed","detail":"White Rabbit could not be reached"}`)
-		},
-		ModifyResponse: func(resp *http.Response) error {
-			f.logf("rabbit: %s %s -> %d", resp.Request.Method, resp.Request.URL.Path, resp.StatusCode)
-			return nil
-		},
+		Rewrite:        f.rewrite,
+		Transport:      transport,
+		ErrorHandler:   f.proxyError,
+		ModifyResponse: f.logResponse,
 	}
 	f.server = &http.Server{Handler: f.guard(proxy), ReadHeaderTimeout: 30 * time.Second}
 	go func() { _ = f.server.Serve(listener) }()
@@ -78,9 +83,32 @@ func StartForwarder(server string, source CredentialSource, transport http.Round
 // Close stops the forwarder.
 func (f *Forwarder) Close() error { return f.server.Close() }
 
+// ProxyURL is the child's HTTPS_PROXY: this forwarder, with the local key as the proxy password.
+func (f *Forwarder) ProxyURL() string {
+	return "http://rabbit:" + f.LocalKey + "@" + f.listener.Addr().String()
+}
+
+func (f *Forwarder) proxyError(w http.ResponseWriter, r *http.Request, err error) {
+	f.logf("rabbit: forwarding %s %s failed: %v", r.Method, r.URL.Path, err)
+	writeJSON(w, http.StatusBadGateway, `{"error":"rabbit_forwarding_failed","detail":"White Rabbit could not be reached"}`)
+}
+
+func (f *Forwarder) logResponse(resp *http.Response) error {
+	f.logf("rabbit: %s %s -> %d", resp.Request.Method, resp.Request.URL.Path, resp.StatusCode)
+	return nil
+}
+
+func contextWithCredential(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, credentialKey{}, key)
+}
+
 // guard admits only requests carrying the local key, and attaches a current virtual credential.
 func (f *Forwarder) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect {
+			f.handleConnect(w, r)
+			return
+		}
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("AccessKey")), []byte(f.LocalKey)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, `{"error":"rabbit_local_key_required","detail":"only the bunny process started by rabbit may use this address"}`)
 			return
@@ -91,7 +119,7 @@ func (f *Forwarder) guard(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, `{"error":"rabbit_no_credential","detail":"White Rabbit did not issue a credential; see rabbit's message above"}`)
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), credentialKey{}, key))
+		r = r.WithContext(contextWithCredential(r.Context(), key))
 		next.ServeHTTP(w, r)
 	})
 }

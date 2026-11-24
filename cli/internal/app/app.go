@@ -720,13 +720,19 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 			if b.Environment != "" {
 				fmt.Fprintf(a.Stdout, "    environment: %s\n", b.Environment)
 			}
+			if len(b.Sites) > 0 {
+				fmt.Fprintf(a.Stdout, "    sites: %s\n", strings.Join(b.Sites, ","))
+			}
+			if b.SitePrefix != "" {
+				fmt.Fprintf(a.Stdout, "    preview sites: %s<PR number>\n", b.SitePrefix)
+			}
 		}
 		return 0, nil
 	case "add":
 		fs := flag.NewFlagSet("admin bindings add", flag.ContinueOnError)
 		fs.SetOutput(a.Stderr)
 		var b api.Binding
-		var events, caps multi
+		var events, caps, sites multi
 		var workflow string
 		fs.StringVar(&b.Issuer, "issuer", "", "trusted issuer name, e.g. github or codebahn (required)")
 		fs.StringVar(&b.Repository, "repository", "", "owner/name (required)")
@@ -739,6 +745,8 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 		fs.StringVar(&b.Environment, "environment", "", "GitHub deployment environment (optional)")
 		fs.Var(&events, "event", "allowed event, repeatable (default: push and workflow_dispatch)")
 		fs.Var(&caps, "capability", "capability to grant, repeatable")
+		fs.Var(&sites, "site", "Bunny Site the sites.* capabilities reach, repeatable")
+		fs.StringVar(&b.SitePrefix, "site-prefix", "", "preview binding: pull_request jobs reach only the site <prefix><PR number>, e.g. example-site-pr-")
 		fs.StringVar(&b.Description, "description", "", "free text")
 		if err := fs.Parse(args); err != nil {
 			return 2, usageError{err.Error()}
@@ -749,7 +757,10 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 				b.WorkflowRef += "@" + b.Ref
 			}
 		}
-		b.Events, b.Capabilities = events, caps
+		b.Events, b.Capabilities, b.Sites = events, caps, sites
+		if b.SitePrefix != "" && len(b.Events) == 0 {
+			b.Events = []string{"pull_request"} // the only event a preview binding accepts
+		}
 		created, err := client.CreateBinding(ctx, token, b)
 		if err != nil {
 			return 1, err

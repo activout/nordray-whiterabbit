@@ -62,7 +62,8 @@ public abstract class CliFederationTests : IAsyncLifetime
 
     protected sealed record BindingBody(
         string Issuer, string Repository, string? RepositoryId, string Ref, string WorkflowRef,
-        string? Environment = null, string[]? Events = null, string[]? Capabilities = null);
+        string? Environment = null, string[]? Events = null, string[]? Capabilities = null,
+        string[]? Sites = null, string? SitePrefix = null);
 
     protected static BindingBody GitHubBinding(string? environment = null) => new(
         "github", "activout/rabbit-ci-test", "123456", "refs/heads/main",
@@ -155,6 +156,8 @@ public abstract class CliFederationTests : IAsyncLifetime
             environment = body.Environment,
             events = body.Events,
             capabilities = body.Capabilities,
+            sites = body.Sites,
+            site_prefix = body.SitePrefix,
         });
         var text = await response.Content.ReadAsStringAsync();
         return (response.StatusCode, text.Length == 0 ? default : JsonDocument.Parse(text).RootElement.Clone());

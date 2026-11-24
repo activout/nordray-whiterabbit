@@ -55,7 +55,11 @@ Tested with BunnyCLI 0.22.0.
 rabbit never falls back to talking to api.bunny.net directly.
 
 **Commands that talk to other hosts.**
-- `storage files` is not supported through rabbit: it needs the zone password, which White Rabbit never hands out.
+- `sites …` works with the `sites.*` capabilities. BunnyCLI uploads site files to Edge Storage itself; rabbit is its
+  HTTPS proxy and terminates TLS for the Edge Storage hosts only, with a CA created for that run (set as
+  `NODE_EXTRA_CA_CERTS`), and sends those requests to White Rabbit, which adds the zone password. Every other
+  connection is tunnelled unchanged, through your own `HTTPS_PROXY` if you have one.
+- `storage files` on a zone that is not a Bunny Site's is not supported: White Rabbit never hands out zone passwords.
 - `db shell` works when the session has `db.token`. White Rabbit issues the database token, and BunnyCLI then connects to the database host directly with it.
 
 **Redacted values.** Magic Containers commands that show environment variable values (`apps env list/pull`, `apps pull`) see redacted values through rabbit; White Rabbit never returns them. `apps env set` and `apps env remove` still work with `mc.env`: they send every variable back, and White Rabbit puts the current value back wherever it finds the placeholder.

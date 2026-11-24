@@ -73,7 +73,9 @@ func CheckArgs(args []string) error {
 }
 
 // ChildEnv is the parent environment without any Bunny or CI credential, plus the forwarder's address and key.
-func ChildEnv(parent []string, apiURL, localKey string) []string {
+// proxyURL is the forwarder as the child's HTTPS proxy (it intercepts only Edge Storage) and caFile the run's CA for
+// NODE_EXTRA_CA_CERTS; the parent's own HTTPS proxy and extra CAs are carried over by the forwarder and the CA file.
+func ChildEnv(parent []string, apiURL, localKey, proxyURL, caFile string) []string {
 	out := make([]string, 0, len(parent)+5)
 	noProxy := ""
 	for _, kv := range parent {
@@ -82,7 +84,8 @@ func ChildEnv(parent []string, apiURL, localKey string) []string {
 		switch {
 		case strings.HasPrefix(upper, "BUNNYNET_"), strings.HasPrefix(upper, "BUNNY_"),
 			strings.HasPrefix(upper, "ACTIONS_ID_TOKEN_REQUEST_"), strings.HasPrefix(upper, "ACTIONS_RUNTIME_"),
-			upper == "GITHUB_TOKEN", upper == "FORGEJO_TOKEN", upper == "GITEA_TOKEN", strings.HasPrefix(upper, "RABBIT_"):
+			upper == "GITHUB_TOKEN", upper == "FORGEJO_TOKEN", upper == "GITEA_TOKEN", strings.HasPrefix(upper, "RABBIT_"),
+			upper == "HTTPS_PROXY", upper == "NODE_EXTRA_CA_CERTS":
 			continue
 		case upper == "NO_PROXY":
 			if value != "" {
@@ -104,6 +107,9 @@ func ChildEnv(parent []string, apiURL, localKey string) []string {
 		"BUNNYNET_DASHBOARD_URL=http://127.0.0.1:1",
 		"NO_PROXY="+loopback,
 		"no_proxy="+loopback,
+		"HTTPS_PROXY="+proxyURL,
+		"https_proxy="+proxyURL,
+		"NODE_EXTRA_CA_CERTS="+caFile,
 	)
 }
 
@@ -123,8 +129,15 @@ func Run(ctx context.Context, o Options) (int, error) {
 		return 1, err
 	}
 
+	forwarder.parentProxy = parentHTTPSProxy(o.Environ)
+	caDir, caFile, err := forwarder.intercept.writeCAFile(envValue(o.Environ, "NODE_EXTRA_CA_CERTS"))
+	if err != nil {
+		return 1, fmt.Errorf("writing the storage CA: %w", err)
+	}
+	defer os.RemoveAll(caDir)
+
 	cmd := exec.Command(o.BunnyPath, o.Args...)
-	cmd.Env = ChildEnv(o.Environ, forwarder.URL, forwarder.LocalKey)
+	cmd.Env = ChildEnv(o.Environ, forwarder.URL, forwarder.LocalKey, forwarder.ProxyURL(), caFile)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("starting BunnyCLI: %w", err)
@@ -189,4 +202,13 @@ func sameFile(a, b string) bool {
 	ia, errA := os.Stat(a)
 	ib, errB := os.Stat(b)
 	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
+func envValue(environ []string, name string) string {
+	for _, kv := range environ {
+		if value, ok := strings.CutPrefix(kv, name+"="); ok {
+			return value
+		}
+	}
+	return ""
 }

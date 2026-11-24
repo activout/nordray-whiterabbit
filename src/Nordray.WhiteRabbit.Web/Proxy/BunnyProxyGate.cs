@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.DataProtection;
+using Nordray.WhiteRabbit.Core;
 using Nordray.WhiteRabbit.Core.Federation;
 using Nordray.WhiteRabbit.Core.Models;
+using Nordray.WhiteRabbit.Core.Sites;
 using Nordray.WhiteRabbit.Infrastructure.Database;
 using Nordray.WhiteRabbit.Web.Cli;
 using Yarp.ReverseProxy.Forwarder;
@@ -19,11 +21,15 @@ namespace Nordray.WhiteRabbit.Web.Proxy;
 public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
 {
     public const string AccessKeyItem = "bunny.access-key";
+    /// <summary>The owner's own bunny.net key, for White Rabbit's own lookups (e.g. a storage zone's password).</summary>
+    public const string OwnerKeyItem = "bunny.owner-key";
+    /// <summary>Set when the request must stay within the caller's sites: a <see cref="SiteAccess"/>.</summary>
+    public const string SiteAccessItem = "bunny.site-access";
     /// <summary>Data Protection purpose for the stored Bunny API keys. Changing it makes every stored key unreadable.</summary>
     public const string KeyPurpose = "BunnyApiKey.v1";
     private readonly IDataProtector _bunnyKeyProtector = dataProtection.CreateProtector(KeyPurpose);
 
-    private sealed record Caller(User Owner, IReadOnlySet<string> Capabilities, SecurityEvent Audit);
+    private sealed record Caller(User Owner, IReadOnlySet<string> Capabilities, SiteScope? Sites, SecurityEvent Audit);
 
     public async Task InvokeAsync(HttpContext ctx, Func<Task> next, RouteModel route)
     {
@@ -44,20 +50,30 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
 
         var allowedEvent = caller.Audit with { EventType = "proxy.request", OperationId = operationId };
 
-        // Capability check: every operation not marked authentication-only needs its capability.
+        // Capability check: every operation not marked authentication-only needs its capability. A site-aware
+        // operation is also granted by its sites.* capability, but then only on the caller's own sites.
         if (metadata["AuthOnly"] != "true")
         {
             var capability = metadata["Capability"];
-            if (!caller.Capabilities.Contains(capability))
+            var siteCapability = metadata.GetValueOrDefault("SiteCapability") ?? "";
+            var viaSite = !caller.Capabilities.Contains(capability) && siteCapability.Length > 0 && caller.Capabilities.Contains(siteCapability);
+            if (!caller.Capabilities.Contains(capability) && !viaSite)
             {
                 await audit.RecordAsync(allowedEvent with { Outcome = SecurityEvent.Denied, Reason = "capability_not_granted", HttpStatus = 403 });
-                await WriteError(ctx, 403, $$"""{"error":"capability_not_granted","required":"{{capability}}"}""");
+                await WriteError(ctx, 403, siteCapability.Length > 0
+                    ? System.Text.Json.JsonSerializer.Serialize(new { error = "capability_not_granted", required = capability, or = siteCapability })
+                    : $$"""{"error":"capability_not_granted","required":"{{capability}}"}""");
                 return;
             }
+            // The sites.* operations themselves always stay within sites; pull zone operations only when granted that way.
+            var siteResource = metadata.GetValueOrDefault("SiteResource") ?? nameof(SiteResource.None);
+            if (siteResource != nameof(SiteResource.None) && (viaSite || capability.StartsWith("sites.", StringComparison.Ordinal)))
+                ctx.Items[SiteAccessItem] = new SiteAccess(caller.Sites, viaSite);
         }
 
-        // Inject the owner's own bunny.net API key via Items, so the route transform adds it after header copying.
-        if (metadata["CredentialKind"] == "AccountApiKey")
+        // Inject the owner's own bunny.net API key via Items, so the route transform adds it after header copying. A
+        // storage request gets the zone's password instead (SitePolicy looks it up with the owner's key).
+        if (metadata["CredentialKind"] is "AccountApiKey" or "StorageZonePassword")
         {
             var reason = TryUnprotectKey(caller.Owner, out var plaintextKey);
             if (reason is not null)
@@ -66,7 +82,8 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
                 await WriteError(ctx, 403, """{"error":"bunny_api_key_not_configured","detail":"Run rabbit admin key set to add your bunny.net API key."}""");
                 return;
             }
-            ctx.Items[AccessKeyItem] = plaintextKey;
+            ctx.Items[OwnerKeyItem] = plaintextKey;
+            if (metadata["CredentialKind"] == "AccountApiKey") ctx.Items[AccessKeyItem] = plaintextKey;
         }
 
         await next();
@@ -129,7 +146,7 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
         // Never broader than what the credential was issued for, nor than what the principal may do now.
         var effective = NameList.Parse(credential.Capabilities).Where(resolved.Principal.Capabilities.Contains).ToHashSet(StringComparer.Ordinal);
         var audit = resolved.Principal.Describe("proxy.request", SecurityEvent.Allowed) with { CredentialId = credential.Id };
-        return (new Caller(resolved.Principal.Owner, effective, audit), null);
+        return (new Caller(resolved.Principal.Owner, effective, resolved.Principal.Sites, audit), null);
     }
 
     /// <summary>Returns a denial reason, or null with the decrypted key.</summary>
@@ -156,3 +173,9 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
         return ctx.Response.WriteAsync(json);
     }
 }
+
+/// <summary>
+/// The request must stay within <paramref name="Scope"/> (null: any site). <paramref name="ViaSiteCapability"/>: granted by
+/// a sites.* capability standing in for pullzone.*, so the operation's site body rules apply too.
+/// </summary>
+public sealed record SiteAccess(SiteScope? Scope, bool ViaSiteCapability);

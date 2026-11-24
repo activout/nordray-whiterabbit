@@ -1,3 +1,4 @@
+using Nordray.WhiteRabbit.Core;
 using Nordray.WhiteRabbit.Bunny;
 
 namespace Nordray.WhiteRabbit.Tests.Unit;
@@ -86,12 +87,21 @@ public class BunnyOperationRegistryTests
     }
 
     [Fact]
-    public void AllOperations_DestinationBaseUrl_IsApiDotBunnyDotNet()
+    public void AllOperations_TargetApiBunnyNet_OrOnlySiteFilesTargetEdgeStorage()
     {
         foreach (var op in _registry.GetAll())
         {
+            if (op.SiteResource == SiteResource.StorageFile)
+            {
+                // Edge Storage only for the files of a site's own zone, with the zone password injected server side.
+                Assert.Equal("https://storage.bunnycdn.com", op.DestinationBaseUrl);
+                Assert.Equal(BunnyCredentialKind.StorageZonePassword, op.CredentialKind);
+                Assert.StartsWith("sites.", op.RequiredCapability);
+                continue;
+            }
             Assert.True(op.DestinationBaseUrl.StartsWith("https://api.bunny.net", StringComparison.Ordinal),
                 $"Operation {op.OperationId} must target https://api.bunny.net only");
+            Assert.NotEqual(BunnyCredentialKind.StorageZonePassword, op.CredentialKind);
         }
     }
 
@@ -100,8 +110,9 @@ public class BunnyOperationRegistryTests
     {
         foreach (var op in _registry.GetAll())
         {
-            Assert.True(op.IncomingPathTemplate.StartsWith("/proxy/api.bunny.net/", StringComparison.Ordinal),
-                $"Operation {op.OperationId} incoming path must be under /proxy/api.bunny.net/");
+            var prefix = op.SiteResource == SiteResource.StorageFile ? "/proxy/storage/" : "/proxy/api.bunny.net/";
+            Assert.True(op.IncomingPathTemplate.StartsWith(prefix, StringComparison.Ordinal),
+                $"Operation {op.OperationId} incoming path must be under {prefix}");
         }
     }
 

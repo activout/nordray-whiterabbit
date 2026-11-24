@@ -48,7 +48,10 @@ The same `rabbit -- …` works at your own terminal, so an AI agent can run Bunn
 | Regions | List regions | (sign-in only) |
 | Account | Account details (`bunny whoami`, the account ID for `bunny apps deploy`) | `account.read` |
 | Statistics | Read account statistics | `statistics.read` |
-| Pull Zones | List, get, create, update, delete | `pullzone.read`, `pullzone.write` |
+| Pull Zones | List, get, create, update, delete, purge, edge rules, force HTTPS | `pullzone.read`, `pullzone.write` |
+| Bunny Sites | Read your sites: their storage zones, pull zones, state and files | `sites.read` |
+| Bunny Sites | Deploy: upload and delete files, publish (edge rules, cache settings, not-found page), purge | `sites.deploy` |
+| Bunny Sites | Create and delete sites, e.g. per-PR previews | `sites.manage` |
 | DNS Zones | List, get, create, update, delete | `dns.read`, `dns.write` |
 | Shield | List zones, get zone, update zone | `shield.read`, `shield.write` |
 | Magic Containers | List and get apps, app overview, get container, regions, list registries | `mc.read` |
@@ -61,7 +64,21 @@ The same `rabbit -- …` works at your own terminal, so an AI agent can run Bunn
 
 **Redaction.** Some responses hold secrets the capability does not cover. White Rabbit replaces those fields with `[redacted by White Rabbit]` before the caller sees them:
 - container environment variable values, in the app, app-create, container, container-update and set-environment responses;
-- registry password fragments, in the registry list.
+- registry password fragments, in the registry list;
+- pull zone secrets (`ZoneSecurityKey`, `AWSSigningKey`, `AWSSigningSecret`, `LogForwardingToken`, custom certificates' `CertificateKey`), in every pull zone response;
+- storage zone passwords (`Password`, `ReadOnlyPassword`), in every storage zone response.
+
+**Bunny Sites are scoped by site name.** A site's storage zone and pull zone are named `sites-<site>-<6 characters>`
+by BunnyCLI. A binding's `sites.*` capabilities reach only the sites it names (`--site`); a human session reaches every
+site. Lists are filtered, anything else is "not found", and a new zone must belong to one of those sites. The
+`sites.*` capabilities never reach a storage zone that is not a site's. Pull zone operations granted through
+`sites.*` accept only the fields a site deploy sends; `pullzone.*` stays account-wide.
+
+**Site files without the zone password.** `bunny sites deploy` uploads straight to `<region>.storage.bunnycdn.com`
+with the zone password, and BunnyCLI has no setting to point it elsewhere. `rabbit` is BunnyCLI's HTTPS proxy: it
+terminates TLS for the Edge Storage hosts only, with a certificate authority that exists for that one run
+(`NODE_EXTRA_CA_CERTS`, valid only for `storage.bunnycdn.com` names), and sends those requests to White Rabbit, which
+injects the zone's password. Everything else is tunnelled unchanged. BunnyCLI only ever sees the redaction placeholder.
 
 Everything else, such as IDs and names, is returned unchanged. A successful response that cannot be parsed for redaction is refused (502), not passed through.
 
@@ -155,7 +172,7 @@ session, then asks for short-lived **virtual credentials** that only White Rabbi
 |---|---|---|
 | `GET /cli/login?port=&state=&code_challenge=` | browser sign-in (email code) | After an explicit confirmation, redirects to `http://127.0.0.1:{port}/callback` with a one-time code `wrc_…` (2 minutes) bound to the PKCE S256 challenge |
 | `POST /api/cli/exchange` `{"code": "…", "code_verifier": "…"}` or `{"subject_token": "…"}` | none (rate limited) | Exchanges a login code with its verifier, or a GitHub Actions or Forgejo Actions token, for a session token `wrs_…`. Humans get 8 hours with every capability, CI workloads 60 minutes with their binding's |
-| `POST /api/cli/credentials` `{"capabilities": […]}` | `Authorization: Bearer wrs_…` | Issues a virtual credential `wrk_…` (5 minutes), never broader than the session. Send it as `AccessKey` to `/proxy/api.bunny.net/…` |
+| `POST /api/cli/credentials` `{"capabilities": […]}` | `Authorization: Bearer wrs_…` | Issues a virtual credential `wrk_…` (5 minutes), never broader than the session. Send it as `AccessKey` to `/proxy/api.bunny.net/…`, or to `/proxy/storage/<host>/<zone>/…` for a site's files |
 | `GET /api/cli/whoami` | session | The authenticated human or workload and its current capabilities |
 | `POST /api/cli/revoke` `{"credential_id": "…"?}` | session | Revokes one credential, or the session and all its credentials |
 | `GET/POST /api/admin/bindings`, `DELETE /api/admin/bindings/{id}` | human session only | Lists, creates and revokes the caller's own CI workload bindings |
@@ -169,7 +186,8 @@ session, then asks for short-lived **virtual credentials** that only White Rabbi
 - **Workload bindings** decide what a CI identity may do. They are created only through the admin API by a human, never from repository content.
   - Every field is matched exactly: issuer, repository, ref (`refs/heads/…` or `refs/tags/…` only) and `workflow_ref`, whose `@ref` must equal the ref.
   - The ref is optional. A binding without one accepts the workflow from any branch or tag, so the repository's own protections decide which refs are trusted: who may push which branches and tags, rulesets, and on GitHub a protected `environment` on the binding. The workflow must still come from the ref being built.
-  - The event must be on the binding's allow-list. `pull_request`, `pull_request_target`, `workflow_run` and similar events are never allowed.
+  - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never allowed, and `pull_request` only on a preview binding.
+  - **Preview bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own preview.
   - **GitHub** bindings also require the immutable `repository_id`, and optionally `repository_owner_id`, `environment` and `job_workflow_ref`.
   - **Forgejo** (tested on 15.0.12) does not issue IDs or environments. Its bindings match on names, so renaming or transferring a repository is a known risk. Forgejo's `ref_protected` claim is always `"false"` and is not used. Forgejo jobs must set `enable-openid-connect: true`.
   - Two matching bindings are refused as ambiguous.
@@ -261,6 +279,27 @@ rabbit -- api PATCH "/mc/apps/$APP_ID/containers/$CONTAINER_ID" --output json \
   --body "$(jq -n --arg tag "$TAG" --arg r "$REGISTRY_ID" '{imageTag: $tag, imageRegistryId: $r, imageNamespace: "acme", imageName: "app"}')"
 ```
 
+**A Bunny Site** has two bindings: one for the production deploy, and a preview binding for the per-PR previews.
+
+```sh
+rabbit admin bindings add --issuer codebahn --repository acme/site --workflow .github/workflows/deploy-production.yml \
+  --site site --capability sites.read --capability sites.deploy --description "site production"
+rabbit admin bindings add --issuer codebahn --repository acme/site --workflow .github/workflows/deploy-preview.yml \
+  --site-prefix site-pr- --capability sites.read --capability sites.deploy --capability sites.manage --description "site previews"
+rabbit admin bindings add --issuer codebahn --repository acme/site --workflow .github/workflows/deploy-cleanup.yml \
+  --site-prefix site-pr- --capability sites.read --capability sites.manage --description "site preview cleanup"
+```
+
+`BunnyWay/actions/deploy-site` takes the key, so call BunnyCLI through rabbit instead; its JSON has the deploy ID and URL:
+
+```sh
+rabbit -- sites show "$SITE" > /dev/null 2>&1 || rabbit -- sites create "$SITE" --region SE --no-link --output json
+DEPLOY=$(rabbit -- sites deploy dist --site "$SITE" --force --output json)
+echo "url=$(echo "$DEPLOY" | jq -r .production)" >> "$GITHUB_OUTPUT"
+```
+
+Custom domains (`bunny sites domains`) and DNS stay manual: they need `pullzone.write` and `dns.write` on the whole account.
+
 A workflow that creates or replaces the whole app (`POST /mc/apps`, `PUT /mc/apps/{id}`) needs `mc.manage`, which
 also lets it delete any app. When it sends environment values from CI secrets, prefer creating the app and its
 environment once by hand and patching only the image.
@@ -299,7 +338,7 @@ examples/ci/                         GitHub Actions and Forgejo Actions workflow
 ## What v1 deliberately does not include
 
 - OpenFGA or attribute-based policies
-- Resource-level scoping (per pull zone, per DNS zone)
+- Resource-level scoping, except Bunny Sites by site name (no per pull zone or per DNS zone grants)
 - Refresh tokens: sign in again when the session ends
 - Third-party OIDC clients: White Rabbit is for CI/CD and the `rabbit` CLI only
 - Automatic endpoint discovery from bunny's OpenAPI specs
