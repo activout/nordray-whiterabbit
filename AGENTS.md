@@ -140,7 +140,7 @@ White Rabbit uses capability-based authorisation. There is no policy engine and 
 - Pull zone operations also accept a `sites.*` capability (`SiteCapability`). Granted that way, lists are filtered to the scope, an out-of-scope zone is 404, creates must name a scoped zone (a pull zone with that site's own storage zone as origin), and only `SiteAllowedBodyFields` are accepted. Granted through `pullzone.*`, they are account-wide as before.
 - `SitePolicy` checks the zone (read upstream by ID with the owner's key) before forwarding; `SiteResponses` filters lists.
 
-**Preview bindings** (`--site-prefix example-site-pr-`) are the only bindings that accept `pull_request`, and nothing else: no ref, exactly the `pull_request` event, only `sites.*` capabilities. The session's one site is `<prefix><PR number>`, taken from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). Fork PRs get no OIDC token from GitHub or Forgejo. A PR job may have changed its own workflow, so it must never reach anything but its own preview site.
+**Pull request bindings** (`--site-prefix example-site-pr-`) are the only bindings that accept `pull_request`, and nothing else: no ref, exactly the `pull_request` event, only `sites.*` capabilities. The session's one site is `<prefix><PR number>`, taken from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). Fork PRs get no OIDC token from GitHub or Forgejo. A PR job may have changed its own workflow, so it must never reach anything but its own preview site.
 
 **Deny by default.** If a route is not in the registry, return `404 Not Found`. If a route is in the registry but the client lacks the required capability, return `403 Forbidden`.
 
@@ -327,7 +327,7 @@ export the variables in your shell or use a tool like `dotenv`.
 - Capability check logic — has capability, missing capability, auth-only passthrough
 - Login code generation and validation — expiry, already consumed, hash mismatch
 - Credential selection logic — correct credential type per `BunnyCredentialKind`
-- Binding rules — exact matching, forbidden events, GitHub-only claims, preview bindings (`pull_request` → `<prefix><PR number>`)
+- Binding rules — exact matching, forbidden events, GitHub-only claims, pull request bindings (`pull_request` → `<prefix><PR number>`)
 - Site scope — zone names, PR refs, list filtering
 
 ### Integration test targets (Nordray.WhiteRabbit.Tests.Integration)

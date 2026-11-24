@@ -8,7 +8,7 @@ namespace Nordray.WhiteRabbit.Core.Federation;
 /// A binding without a ref accepts any branch or tag. Its workflow is then <c>&lt;repository&gt;/&lt;path&gt;</c>, and the
 /// repository's own protections (who may push which refs, GitHub environments) decide which refs are trusted.
 /// <para>
-/// A preview binding (<see cref="WorkloadBinding.SitePrefix"/>) is the one exception to "no pull requests": it accepts
+/// A pull request binding (<see cref="WorkloadBinding.SitePrefix"/>) is the one exception to "no pull requests": it accepts
 /// only <c>pull_request</c> jobs and only the sites.* capabilities, and the session reaches exactly one site,
 /// <c>&lt;prefix&gt;&lt;PR number&gt;</c>, with the number taken from the token's ref. Fork pull requests get no OIDC
 /// token from GitHub or Forgejo, so such a job comes from a branch in the repository itself; it may have changed
@@ -17,7 +17,7 @@ namespace Nordray.WhiteRabbit.Core.Federation;
 /// </summary>
 public static class BindingRules
 {
-    /// <summary>The pull request event, allowed only on preview bindings.</summary>
+    /// <summary>The pull request event, allowed only on pull request bindings.</summary>
     public const string PullRequestEvent = "pull_request";
 
     /// <summary>Events that run code from someone other than the repository's maintainers. Never allowed.</summary>
@@ -27,7 +27,7 @@ public static class BindingRules
         "issue_comment", "fork", "workflow_run",
     };
 
-    /// <summary>The only capabilities a preview binding may hold.</summary>
+    /// <summary>The only capabilities a pull request binding may hold.</summary>
     public static readonly IReadOnlySet<string> SiteCapabilities = new HashSet<string>(StringComparer.Ordinal)
     {
         "sites.read", "sites.deploy", "sites.manage",
@@ -49,7 +49,7 @@ public static class BindingRules
         var matches = bindings.Where(b => b.RevokedUtc is null && Accepts(b, identity)).Take(2).ToList();
         return matches.Count switch
         {
-            // Without a preview binding, a pull request job is refused for what it is.
+            // Without a pull request binding, a pull request job is refused for what it is.
             0 when identity.EventName == PullRequestEvent => new MatchResult(null, "event_not_allowed"),
             0 => new MatchResult(null, "no_matching_binding"),
             1 => new MatchResult(matches[0], null),
@@ -88,7 +88,7 @@ public static class BindingRules
         if (b.Ref.Length > 0 && !string.Equals(b.Ref, id.Ref, StringComparison.Ordinal)) return false;
         if (!string.Equals(workflowRef, id.WorkflowRef, StringComparison.Ordinal)) return false;
         if (!NameList.Parse(b.EventNames).Contains(id.EventName!)) return false;
-        // Pull requests only for preview bindings, and preview bindings only for pull requests.
+        // Pull requests only for pull request bindings, and pull request bindings only for pull requests.
         if ((id.EventName == PullRequestEvent) != (b.SitePrefix is not null)) return false;
 
         if (id.IssuerKind == IssuerKind.GitHub)
@@ -103,7 +103,7 @@ public static class BindingRules
     }
 
     /// <summary>
-    /// The sites a session from this binding and identity may touch: the PR's preview site for a preview binding,
+    /// The sites a session from this binding and identity may touch: the PR's preview site for a pull request binding,
     /// else the binding's sites (none when it has no sites.* capability).
     /// </summary>
     public static IReadOnlyList<string> SitesFor(WorkloadBinding b, WorkloadIdentity id)
@@ -140,17 +140,17 @@ public static class BindingRules
         {
             if (!SiteScope.IsSitePrefix(b.SitePrefix))
                 errors.Add("site_prefix must be lowercase letters, digits and dashes, e.g. 'example-site-pr-'");
-            if (sites.Count > 0) errors.Add("a preview binding (site_prefix) cannot also name sites");
-            if (b.Ref.Length > 0) errors.Add("a preview binding (site_prefix) has no ref: pull request refs differ per PR");
+            if (sites.Count > 0) errors.Add("a pull request binding (site_prefix) cannot also name sites");
+            if (b.Ref.Length > 0) errors.Add("a pull request binding (site_prefix) has no ref: pull request refs differ per PR");
             if (events.Count != 1 || !events.Contains(PullRequestEvent))
-                errors.Add("a preview binding (site_prefix) accepts exactly the pull_request event");
+                errors.Add("a pull request binding (site_prefix) accepts exactly the pull_request event");
             foreach (var c in capabilities.Where(c => !SiteCapabilities.Contains(c)))
-                errors.Add($"a preview binding (site_prefix) may only hold sites.* capabilities, not '{c}'");
+                errors.Add($"a pull request binding (site_prefix) may only hold sites.* capabilities, not '{c}'");
         }
         else
         {
             if (events.Contains(PullRequestEvent))
-                errors.Add("event 'pull_request' runs untrusted code: it is allowed only on a preview binding (site_prefix)");
+                errors.Add("event 'pull_request' runs untrusted code: it is allowed only on a pull request binding (site_prefix)");
             if (capabilities.Overlaps(SiteCapabilities) && sites.Count == 0)
                 errors.Add("sites.* capabilities need the sites they reach (site), or a site_prefix for previews");
             if (sites.Count > 0 && !capabilities.Overlaps(SiteCapabilities))

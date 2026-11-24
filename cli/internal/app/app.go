@@ -724,7 +724,7 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 				fmt.Fprintf(a.Stdout, "    sites: %s\n", strings.Join(b.Sites, ","))
 			}
 			if b.SitePrefix != "" {
-				fmt.Fprintf(a.Stdout, "    preview sites: %s<PR number>\n", b.SitePrefix)
+				fmt.Fprintf(a.Stdout, "    pull request sites: %s<PR number>\n", b.SitePrefix)
 			}
 		}
 		return 0, nil
@@ -746,7 +746,7 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 		fs.Var(&events, "event", "allowed event, repeatable (default: push and workflow_dispatch)")
 		fs.Var(&caps, "capability", "capability to grant, repeatable")
 		fs.Var(&sites, "site", "Bunny Site the sites.* capabilities reach, repeatable")
-		fs.StringVar(&b.SitePrefix, "site-prefix", "", "preview binding: pull_request jobs reach only the site <prefix><PR number>, e.g. example-site-pr-")
+		fs.StringVar(&b.SitePrefix, "site-prefix", "", "pull request binding: pull_request jobs reach only the site <prefix><PR number>, e.g. example-site-pr-")
 		fs.StringVar(&b.Description, "description", "", "free text")
 		if err := fs.Parse(args); err != nil {
 			return 2, usageError{err.Error()}
@@ -759,7 +759,7 @@ func (a *App) bindings(ctx context.Context, sub string, args []string) (int, err
 		}
 		b.Events, b.Capabilities, b.Sites = events, caps, sites
 		if b.SitePrefix != "" && len(b.Events) == 0 {
-			b.Events = []string{"pull_request"} // the only event a preview binding accepts
+			b.Events = []string{"pull_request"} // the only event a pull request binding accepts
 		}
 		created, err := client.CreateBinding(ctx, token, b)
 		if err != nil {

@@ -81,7 +81,7 @@ Not possible through rabbit:
 | No session / expired | `! rabbit auth login` again |
 | 403 `bunny_api_key_not_configured` | The user stores their key: `! rabbit admin key set` |
 | CI: 401 `no_matching_binding` | No binding matches the job's repository, ref, workflow or event |
-| CI: 401 `event_not_allowed` | A `pull_request` job without a preview binding (`--site-prefix`), or from another workflow |
+| CI: 401 `event_not_allowed` | A `pull_request` job without a pull request binding (`--site-prefix`), or from another workflow |
 | 404 on a site, zone or site file | Outside the session's sites: check the binding's `--site` / `--site-prefix` |
 
 `rabbit admin audit --since 1h` (interactive session only) shows what was allowed or denied, with the reason, for the
@@ -118,6 +118,10 @@ Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-ac
    `rabbit admin audit --since 1h`. Only after a green run does the user delete the repository's Bunny key secret.
 
 Things that trip up a move (the README's "Moving a workflow to White Rabbit" has the full recipes):
+- **Preview sites for pull requests.** Like Firebase Hosting's preview channels: each PR gets its own temporary site
+  `NAME-pr-<N>` at its own URL, deployed on every push and deleted when the PR closes, so reviewers see the result
+  before merging. The PR's jobs use a pull request binding (`--site-prefix NAME-pr-`), which reaches only that one
+  site, so the job needs no key and cannot touch production. Fork PRs get no token, so no preview.
 - **Bunny Sites.** Replace `BunnyWay/actions/deploy-site` (it takes the key) with
   `rabbit -- sites deploy DIR --site NAME --force --output json` (`.production` is the URL, `.id` the deploy ID).
   Production: a binding with `--site NAME` and `sites.read` + `sites.deploy`. Previews and their cleanup: one
@@ -167,9 +171,9 @@ rabbit admin bindings rm 3
     any branch can otherwise change the workflow there and use the binding.
 - `--workflow` takes the workflow file path. The binding stores `<repository>/<path>@<ref>`, and the job's
   `workflow_ref` must match it exactly.
-- `--event` defaults to `push` and `workflow_dispatch`. `pull_request` is refused except on a preview binding.
+- `--event` defaults to `push` and `workflow_dispatch`. `pull_request` is refused except on a pull request binding.
 - `--site NAME` (repeatable) names the Bunny Sites the binding's `sites.*` capabilities reach; required with `sites.*`.
-- `--site-prefix PREFIX` makes a preview binding: only `pull_request` jobs (the default event then), no `--ref`, only
+- `--site-prefix PREFIX` makes a pull request binding: only `pull_request` jobs (the default event then), no `--ref`, only
   `sites.*`, and each job reaches exactly the site `<prefix><PR number>`. Fork PRs get no OIDC token at all.
 - GitHub only: `--environment` and `--job-workflow-ref` narrow the binding further.
 - **There is no edit.** To change a binding, `rm` the old one and add the new one; two bindings that both match a job

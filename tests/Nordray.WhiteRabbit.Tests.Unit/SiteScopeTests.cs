@@ -87,7 +87,7 @@ public class SiteScopeTests
         Assert.Equal(operationId, new BunnyOperationRegistry().FindByRequest("GET", path)?.OperationId);
 }
 
-public class PreviewBindingTests
+public class PullRequestBindingTests
 {
     private static readonly IReadOnlySet<string> Known =
         new HashSet<string> { "sites.read", "sites.deploy", "sites.manage", "statistics.read" };
@@ -118,7 +118,7 @@ public class PreviewBindingTests
     };
 
     [Fact]
-    public void PullRequest_MatchesAPreviewBinding_AndReachesOnlyItsOwnPreviewSite()
+    public void PullRequest_MatchesAPullRequestBinding_AndReachesOnlyItsOwnPreviewSite()
     {
         var match = BindingRules.Match(PullRequest(), [Preview()]);
         Assert.Equal(9, match.Binding?.Id);
@@ -126,7 +126,7 @@ public class PreviewBindingTests
     }
 
     [Fact]
-    public void PullRequest_WithoutAPreviewBinding_IsEventNotAllowed()
+    public void PullRequest_WithoutAPullRequestBinding_IsEventNotAllowed()
     {
         var push = Preview() with { SitePrefix = null, EventNames = "pull_request", Sites = "site" };
         Assert.Equal("event_not_allowed", BindingRules.Match(PullRequest(), [push]).DenialReason);
@@ -143,7 +143,7 @@ public class PreviewBindingTests
         Assert.Equal("event_not_allowed", BindingRules.Match(PullRequest(workflow: "other.yml"), [Preview()]).DenialReason);
 
     [Fact]
-    public void PreviewBinding_NeverMatchesAPush()
+    public void PullRequestBinding_NeverMatchesAPush()
     {
         var push = PullRequest("refs/heads/main") with { EventName = "push" };
         var binding = Preview() with { EventNames = "pull_request push" };
@@ -155,7 +155,7 @@ public class PreviewBindingTests
         Assert.Equal(["a-site", "b-site"], BindingRules.SitesFor(Preview() with { SitePrefix = null, Sites = "b-site a-site" }, PullRequest()));
 
     [Fact]
-    public void ValidPreviewBinding_HasNoProblems() =>
+    public void ValidPullRequestBinding_HasNoProblems() =>
         Assert.Empty(BindingRules.Validate(Preview(), IssuerKind.Forgejo, Known));
 
     [Theory]
@@ -164,7 +164,7 @@ public class PreviewBindingTests
     [InlineData("ref")]
     [InlineData("sites")]
     [InlineData("prefix")]
-    public void PreviewBinding_StaysNarrow(string variant)
+    public void PullRequestBinding_StaysNarrow(string variant)
     {
         var binding = variant switch
         {

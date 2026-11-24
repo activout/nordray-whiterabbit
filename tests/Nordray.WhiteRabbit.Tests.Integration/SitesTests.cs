@@ -8,7 +8,7 @@ using RichardSzalay.MockHttp;
 namespace Nordray.WhiteRabbit.Tests.Integration;
 
 /// <summary>
-/// Bunny Sites through White Rabbit: site-scoped bindings, per-PR preview bindings, the storage proxy that injects
+/// Bunny Sites through White Rabbit: site-scoped bindings, pull request bindings, the storage proxy that injects
 /// the zone password, and the redaction of zone secrets. The fake account has a production site (example-site), its PR 7
 /// preview, another site and a storage zone that is not a site.
 /// </summary>
@@ -74,7 +74,7 @@ public class SitesTests : CliFederationTests
         });
     }
 
-    private BindingBody PreviewBinding(params string[] capabilities) => new(
+    private BindingBody PullRequestBinding(params string[] capabilities) => new(
         "codebahn", "acme/example-site", null, "", "acme/example-site/.github/workflows/deploy-preview.yml",
         Events: ["pull_request"], Capabilities: capabilities.Length > 0 ? capabilities : ["sites.read", "sites.deploy", "sites.manage"],
         SitePrefix: "example-site-pr-");
@@ -87,12 +87,12 @@ public class SitesTests : CliFederationTests
         return ForgejoToken(claims);
     }
 
-    /// <summary>A preview binding, a PR 7 job's session and a key with all three sites.* capabilities.</summary>
+    /// <summary>A pull request binding, a PR 7 job's session and a key with all three sites.* capabilities.</summary>
     private async Task<(string Session, string Key, JsonElement Principal)> PreviewKeyAsync()
     {
         FakeAccount();
         var human = await HumanSessionAsync();
-        var (created, problems) = await CreateBindingAsync(human, PreviewBinding());
+        var (created, problems) = await CreateBindingAsync(human, PullRequestBinding());
         Assert.True(created == HttpStatusCode.Created, problems.ToString());
         var (status, body) = await ExchangeAsync(PullRequestToken());
         Assert.Equal(HttpStatusCode.OK, status);
@@ -223,7 +223,7 @@ public class SitesTests : CliFederationTests
     {
         FakeAccount();
         var human = await HumanSessionAsync();
-        await CreateBindingAsync(human, PreviewBinding());
+        await CreateBindingAsync(human, PullRequestBinding());
         var (_, body) = await ExchangeAsync(PullRequestToken(number: 8));
         var key = await CredentialAsync(body.GetProperty("access_token").GetString()!);
         Assert.Equal(HttpStatusCode.NotFound, (await SendAsync(HttpMethod.Get, StoragePath(PreviewZone, ""), key)).StatusCode);
@@ -233,7 +233,7 @@ public class SitesTests : CliFederationTests
     public async Task PullRequestFromAnotherWorkflow_IsDenied()
     {
         FakeAccount();
-        await CreateBindingAsync(await HumanSessionAsync(), PreviewBinding());
+        await CreateBindingAsync(await HumanSessionAsync(), PullRequestBinding());
         await AssertExchangeDenied(PullRequestToken(workflow: "deploy-production.yml"), "event_not_allowed");
     }
 
@@ -287,8 +287,8 @@ public class SitesTests : CliFederationTests
     }
 
     [Theory]
-    [InlineData("mc_deploy_on_preview")]
-    [InlineData("push_on_preview")]
+    [InlineData("mc_deploy_on_pull_request_binding")]
+    [InlineData("push_on_pull_request_binding")]
     [InlineData("sites_without_site")]
     [InlineData("pull_request_without_prefix")]
     public async Task Admin_SiteBindingsStayNarrow(string variant)
@@ -296,10 +296,10 @@ public class SitesTests : CliFederationTests
         var human = await HumanSessionAsync();
         var binding = variant switch
         {
-            "mc_deploy_on_preview" => PreviewBinding("sites.deploy", "mc.deploy"),
-            "push_on_preview" => PreviewBinding() with { Events = ["pull_request", "push"] },
-            "sites_without_site" => PreviewBinding() with { SitePrefix = null, Events = ["push"] },
-            "pull_request_without_prefix" => PreviewBinding() with { SitePrefix = null, Sites = ["example-site"] },
+            "mc_deploy_on_pull_request_binding" => PullRequestBinding("sites.deploy", "mc.deploy"),
+            "push_on_pull_request_binding" => PullRequestBinding() with { Events = ["pull_request", "push"] },
+            "sites_without_site" => PullRequestBinding() with { SitePrefix = null, Events = ["push"] },
+            "pull_request_without_prefix" => PullRequestBinding() with { SitePrefix = null, Sites = ["example-site"] },
             _ => throw new ArgumentException(variant),
         };
         var (status, body) = await CreateBindingAsync(human, binding);
@@ -311,7 +311,7 @@ public class SitesTests : CliFederationTests
     public async Task Bindings_ListShowsTheirSites()
     {
         var human = await HumanSessionAsync();
-        await CreateBindingAsync(human, PreviewBinding());
+        await CreateBindingAsync(human, PullRequestBinding());
         var listed = (await GetJsonAsync("/api/admin/bindings", human))[0];
         Assert.Equal("example-site-pr-", listed.GetProperty("site_prefix").GetString());
         Assert.Equal(0, listed.GetProperty("sites").GetArrayLength());

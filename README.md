@@ -186,8 +186,8 @@ session, then asks for short-lived **virtual credentials** that only White Rabbi
 - **Workload bindings** decide what a CI identity may do. They are created only through the admin API by a human, never from repository content.
   - Every field is matched exactly: issuer, repository, ref (`refs/heads/…` or `refs/tags/…` only) and `workflow_ref`, whose `@ref` must equal the ref.
   - The ref is optional. A binding without one accepts the workflow from any branch or tag, so the repository's own protections decide which refs are trusted: who may push which branches and tags, rulesets, and on GitHub a protected `environment` on the binding. The workflow must still come from the ref being built.
-  - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never allowed, and `pull_request` only on a preview binding.
-  - **Preview bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own preview.
+  - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never allowed, and `pull_request` only on a pull request binding.
+  - **Pull request bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own preview.
   - **GitHub** bindings also require the immutable `repository_id`, and optionally `repository_owner_id`, `environment` and `job_workflow_ref`.
   - **Forgejo** (tested on 15.0.12) does not issue IDs or environments. Its bindings match on names, so renaming or transferring a repository is a known risk. Forgejo's `ref_protected` claim is always `"false"` and is not used. Forgejo jobs must set `enable-openid-connect: true`.
   - Two matching bindings are refused as ambiguous.
@@ -279,24 +279,49 @@ rabbit -- api PATCH "/mc/apps/$APP_ID/containers/$CONTAINER_ID" --output json \
   --body "$(jq -n --arg tag "$TAG" --arg r "$REGISTRY_ID" '{imageTag: $tag, imageRegistryId: $r, imageNamespace: "acme", imageName: "app"}')"
 ```
 
-**A Bunny Site** has two bindings: one for the production deploy, and a preview binding for the per-PR previews.
+**Preview sites for pull requests.** Every pull request can get its own temporary copy of a Bunny Site, at its own
+URL, before anything is merged, like Firebase Hosting's preview channels or Netlify's deploy previews. The PR's job
+creates `example-site-pr-<N>` on its first run, deploys every push to it and posts the URL on the PR; closing the PR
+deletes the site. Reviewers look at the real result, not a screenshot, and production is never touched.
+
+Until now that meant giving every PR job the account key. With White Rabbit it takes a **pull request binding**
+(`--site-prefix`): it accepts `pull_request` jobs, and each one reaches exactly one site, `<prefix><PR number>`, with the
+number taken from the job's own OIDC token. A PR job can change its own workflow, but it still reaches nothing except
+its own preview: no other PR's site, not production, nothing else on the account. Pull requests from forks get no OIDC
+token on GitHub or Forgejo, so they never get a preview.
+
+A site with previews has three bindings, one per workflow:
 
 ```sh
-rabbit admin bindings add --issuer codebahn --repository acme/site --workflow .github/workflows/deploy-production.yml \
-  --site site --capability sites.read --capability sites.deploy --description "site production"
-rabbit admin bindings add --issuer codebahn --repository acme/site --workflow .github/workflows/deploy-preview.yml \
-  --site-prefix site-pr- --capability sites.read --capability sites.deploy --capability sites.manage --description "site previews"
-rabbit admin bindings add --issuer codebahn --repository acme/site --workflow .github/workflows/deploy-cleanup.yml \
-  --site-prefix site-pr- --capability sites.read --capability sites.manage --description "site preview cleanup"
+# Production: v* tags deploy the site itself.
+rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-production.yml \
+  --site example-site --capability sites.read --capability sites.deploy --description "example-site production"
+# Previews: each pull request creates and updates example-site-pr-<N>.
+rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-preview.yml \
+  --site-prefix example-site-pr- --capability sites.read --capability sites.deploy --capability sites.manage --description "example-site previews"
+# Cleanup: closing the pull request deletes its preview.
+rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-cleanup.yml \
+  --site-prefix example-site-pr- --capability sites.read --capability sites.manage --description "example-site preview cleanup"
 ```
 
-`BunnyWay/actions/deploy-site` takes the key, so call BunnyCLI through rabbit instead; its JSON has the deploy ID and URL:
+`BunnyWay/actions/deploy-site` takes the key, so call BunnyCLI through rabbit instead. Its JSON has the deploy ID and URL.
+The preview job (`on: pull_request`, types `opened`, `synchronize`, `reopened`):
 
 ```sh
+SITE="example-site-pr-$PR_NUMBER"
 rabbit -- sites show "$SITE" > /dev/null 2>&1 || rabbit -- sites create "$SITE" --region SE --no-link --output json
-DEPLOY=$(rabbit -- sites deploy dist --site "$SITE" --force --output json)
-echo "url=$(echo "$DEPLOY" | jq -r .production)" >> "$GITHUB_OUTPUT"
+URL=$(rabbit -- sites deploy dist --site "$SITE" --force --output json | jq -r .production)
+# then post or update "$URL" as a PR comment with the job's own token
 ```
+
+The cleanup job (`on: pull_request`, type `closed`):
+
+```sh
+SITE="example-site-pr-$PR_NUMBER"
+if rabbit -- sites show "$SITE" > /dev/null 2>&1; then rabbit -- sites delete "$SITE" --force; fi
+```
+
+Production is the same `sites deploy` with `--site example-site`.
 
 Custom domains (`bunny sites domains`) and DNS stay manual: they need `pullzone.write` and `dns.write` on the whole account.
 

@@ -29,7 +29,7 @@ public sealed record WorkloadBinding
     public string Capabilities { get; init; } = "";
     /// <summary>Space-separated site names the sites.* capabilities reach, or null.</summary>
     public string? Sites { get; init; }
-    /// <summary>A preview binding: pull_request jobs reach only the site <c>&lt;prefix&gt;&lt;PR number&gt;</c>.</summary>
+    /// <summary>A pull request binding: pull_request jobs reach only the site <c>&lt;prefix&gt;&lt;PR number&gt;</c>.</summary>
     public string? SitePrefix { get; init; }
     public string? Description { get; init; }
     public DateTime CreatedUtc { get; init; }
