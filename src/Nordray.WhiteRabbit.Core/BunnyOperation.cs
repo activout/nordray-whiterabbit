@@ -14,8 +14,26 @@ public sealed record BunnyOperation(
     IReadOnlyList<string>? RedactJsonFields = null,
     string? RestoreRedactedEnvironmentFrom = null,
     IReadOnlyList<string>? AllowedBodyFields = null,
-    string? RestoreRedactedAppEnvironmentFrom = null)
+    string? RestoreRedactedAppEnvironmentFrom = null,
+    string? SiteCapability = null,
+    SiteResource SiteResource = SiteResource.None,
+    IReadOnlyList<string>? SiteAllowedBodyFields = null)
 {
+    /// <summary>
+    /// A second capability that also grants the operation, but only on the caller's own sites (<see cref="SiteResource"/>
+    /// says how the zone is found). A caller with <see cref="RequiredCapability"/> is not limited to sites.
+    /// </summary>
+    public string? SiteCapability { get; init; } = SiteCapability;
+
+    /// <summary>Which zone the request is about, for the site scope check. None for operations that are not site-aware.</summary>
+    public SiteResource SiteResource { get; init; } = SiteResource;
+
+    /// <summary>
+    /// Like <see cref="AllowedBodyFields"/>, but only when the operation was granted through <see cref="SiteCapability"/>.
+    /// <c>Name=value</c> allows the field only with exactly that value.
+    /// </summary>
+    public IReadOnlyList<string>? SiteAllowedBodyFields { get; init; } = SiteAllowedBodyFields;
+
     /// <summary>
     /// JSON fields of a successful response that White Rabbit replaces before the caller sees them, because they hold
     /// secrets the capability does not cover (e.g. container environment variable values). Paths use <c>.</c> between
@@ -44,6 +62,26 @@ public sealed record BunnyOperation(
     /// the redaction placeholder. A placeholder anywhere else in the body is refused.
     /// </summary>
     public string? RestoreRedactedAppEnvironmentFrom { get; init; } = RestoreRedactedAppEnvironmentFrom;
+}
+
+/// <summary>How a site-aware operation identifies its zone, so the site scope can be checked.</summary>
+public enum SiteResource
+{
+    None,
+    /// <summary>GET of a pull zone list: the response is filtered to the scope.</summary>
+    PullZoneList,
+    /// <summary>A pull zone by its <c>{id}</c> or <c>{pullZoneId}</c> route value.</summary>
+    PullZone,
+    /// <summary>POST /pullzone: the body's <c>Name</c> and <c>StorageZoneId</c>.</summary>
+    PullZoneCreate,
+    /// <summary>GET of a storage zone list: filtered to the scope.</summary>
+    StorageZoneList,
+    /// <summary>A storage zone by its <c>{id}</c> route value.</summary>
+    StorageZone,
+    /// <summary>POST /storagezone: the body's <c>Name</c>.</summary>
+    StorageZoneCreate,
+    /// <summary>A file in a storage zone, by the <c>{zoneName}</c> route value. The zone password is injected.</summary>
+    StorageFile,
 }
 
 public enum BunnyCredentialKind

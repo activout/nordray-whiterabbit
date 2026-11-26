@@ -6,6 +6,7 @@ using Nordray.WhiteRabbit.Bunny;
 using Nordray.WhiteRabbit.Core.Access;
 using Nordray.WhiteRabbit.Core.Federation;
 using Nordray.WhiteRabbit.Core.Models;
+using Nordray.WhiteRabbit.Core.Sites;
 using Nordray.WhiteRabbit.Infrastructure.Database;
 using Nordray.WhiteRabbit.Web.Proxy;
 
@@ -135,6 +136,9 @@ public static class CliEndpoints
             var match = BindingRules.Match(identity, await bindings.ListActiveByIssuerAsync(identity.IssuerName));
             if (match.Binding is null)
                 return await DenyExchange(audit, match.DenialReason!, identity.IssuerUrl, identity);
+            var sites = BindingRules.SitesFor(match.Binding, identity);
+            if (match.Binding.SitePrefix is not null && (sites.Count != 1 || !SiteScope.IsSiteName(sites[0])))
+                return await DenyExchange(audit, "preview_site_invalid", identity.IssuerUrl, identity);
 
             session = NewSession(now, options.WorkloadSessionLifetime) with
             {
@@ -148,6 +152,7 @@ public static class CliEndpoints
                 WorkflowRef = identity.WorkflowRef,
                 Ref = identity.Ref,
                 RunId = identity.RunId,
+                Sites = sites.Count > 0 ? NameList.Format(sites) : null,
             };
         }
 
@@ -309,7 +314,9 @@ public static class CliEndpoints
         string? Environment,
         string[]? Events,
         string[]? Capabilities,
-        string? Description);
+        string? Description,
+        string[]? Sites = null,
+        string? SitePrefix = null);
 
     private static async Task<IResult> ListBindings(
         HttpContext ctx, IWorkloadBindingDao bindings, CliPrincipalResolver resolver, SecurityAudit audit)
@@ -350,6 +357,8 @@ public static class CliEndpoints
             Environment = Blank(request.Environment),
             EventNames = NameList.Format(request.Events is { Length: > 0 } events ? events : BindingRules.DefaultEvents),
             Capabilities = NameList.Format(request.Capabilities ?? []),
+            Sites = request.Sites is { Length: > 0 } siteList ? NameList.Format(siteList.Select(x => x.Trim())) : null,
+            SitePrefix = Blank(request.SitePrefix),
             Description = Blank(request.Description),
             CreatedUtc = DateTime.UtcNow,
         };
@@ -484,6 +493,8 @@ public static class CliEndpoints
         WorkflowRef = p.Session.WorkflowRef,
         RunId = p.Session.RunId,
         Capabilities = p.Capabilities.Order(StringComparer.Ordinal),
+        // Null for every site (a human); otherwise the only sites sites.* reaches.
+        Sites = p.Sites?.Sites.Order(StringComparer.Ordinal),
         SessionExpiresAt = p.Session.ExpiresUtc,
         HasBunnyKey = !string.IsNullOrEmpty(p.Owner.BunnyApiKey),
     };
@@ -501,6 +512,8 @@ public static class CliEndpoints
         b.Environment,
         Events = NameList.Parse(b.EventNames).Order(StringComparer.Ordinal),
         Capabilities = NameList.Parse(b.Capabilities).Order(StringComparer.Ordinal),
+        Sites = NameList.Parse(b.Sites).Order(StringComparer.Ordinal),
+        b.SitePrefix,
         b.Description,
         b.CreatedUtc,
     };

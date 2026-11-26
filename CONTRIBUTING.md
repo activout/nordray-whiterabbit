@@ -43,7 +43,10 @@ Some responses hold secrets the capability does not cover. White Rabbit replaces
 `[redacted by White Rabbit]`:
 - container environment variable values, in the app, app-create, container, container-update and set-environment
   responses;
-- registry password fragments, in the registry list.
+- registry password fragments, in the registry list;
+- pull zone secrets (`ZoneSecurityKey`, `AWSSigningKey`, `AWSSigningSecret`, `LogForwardingToken`, custom
+  certificates' `CertificateKey`), in every pull zone response;
+- storage zone passwords (`Password`, `ReadOnlyPassword`), in every storage zone response.
 
 Everything else is returned unchanged. A successful response that cannot be parsed for redaction is refused (502), not
 passed through.
@@ -58,6 +61,18 @@ container's `environmentVariables` gets that variable's current value from the c
 `id` (or, without one, the same `name`). A placeholder that matches no current variable, or one anywhere else in the
 body, is refused (400). If the current app cannot be read, nothing is written (502).
 
+**Bunny Sites are scoped by site name.** A site's storage zone and pull zone are named `sites-<site>-<6 characters>`
+by BunnyCLI. A binding's `sites.*` capabilities reach only the sites it names (`--site`); a human session reaches every
+site. Lists are filtered, anything else is "not found", and a new zone must belong to one of those sites. The
+`sites.*` capabilities never reach a storage zone that is not a site's. Pull zone operations granted through
+`sites.*` accept only the fields a site deploy sends; `pullzone.*` stays account-wide.
+
+**Site files without the zone password.** `bunny sites deploy` uploads straight to `<region>.storage.bunnycdn.com`
+with the zone password, and BunnyCLI has no setting to point it elsewhere. `rabbit` is BunnyCLI's HTTPS proxy: it
+terminates TLS for the Edge Storage hosts only, with a certificate authority that exists for that one run
+(`NODE_EXTRA_CA_CERTS`, valid only for `storage.bunnycdn.com` names), and sends those requests to White Rabbit, which
+injects the zone's password. Everything else is tunnelled unchanged. BunnyCLI only ever sees the redaction placeholder.
+
 **`mc.deploy` changes only the image.** Bunny's container update also accepts environment variables, endpoints,
 volumes, probes and the entry point. White Rabbit forwards only the image fields and refuses any other field (400),
 even when it is null or empty.
@@ -68,7 +83,7 @@ even when it is null or empty.
 |---|---|---|
 | `GET /cli/login?port=&state=&code_challenge=` | browser sign-in (email code) | After an explicit confirmation, redirects to `http://127.0.0.1:{port}/callback` with a one-time code `wrc_…` (2 minutes) bound to the PKCE S256 challenge |
 | `POST /api/cli/exchange` `{"code": "…", "code_verifier": "…"}` or `{"subject_token": "…"}` | none (rate limited) | Exchanges a login code with its verifier, or a GitHub Actions or Forgejo Actions token, for a session token `wrs_…`. Humans get 8 hours with every capability, CI workloads 60 minutes with their binding's |
-| `POST /api/cli/credentials` `{"capabilities": […]}` | `Authorization: Bearer wrs_…` | Issues a virtual credential `wrk_…` (5 minutes), never broader than the session. Send it as `AccessKey` to `/proxy/api.bunny.net/…` |
+| `POST /api/cli/credentials` `{"capabilities": […]}` | `Authorization: Bearer wrs_…` | Issues a virtual credential `wrk_…` (5 minutes), never broader than the session. Send it as `AccessKey` to `/proxy/api.bunny.net/…`, or to `/proxy/storage/<host>/<zone>/…` for a site's files |
 | `GET /api/cli/whoami` | session | The authenticated human or workload and its current capabilities |
 | `POST /api/cli/revoke` `{"credential_id": "…"?}` | session | Revokes one credential, or the session and all its credentials |
 | `GET/POST /api/admin/bindings`, `DELETE /api/admin/bindings/{id}` | human session only | Lists, creates and revokes the caller's own CI workload bindings |
@@ -97,8 +112,13 @@ even when it is null or empty.
   - The ref is optional. A binding without one accepts the workflow from any branch or tag, so the repository's own
     protections decide which refs are trusted: who may push which branches and tags, rulesets, and on GitHub a
     protected `environment` on the binding. The workflow must still come from the ref being built.
-  - The event must be on the binding's allow-list. `pull_request`, `pull_request_target`, `workflow_run` and similar
-    events are never allowed.
+  - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never
+    allowed, and `pull_request` only on a pull request binding.
+  - **Pull request bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref
+    and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the
+    token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either
+    forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own
+    preview.
   - **GitHub** bindings also require the immutable `repository_id`, and optionally `repository_owner_id`,
     `environment` and `job_workflow_ref`.
   - **Forgejo** (tested on 15.0.12) does not issue IDs or environments. Its bindings match on names, so renaming or
@@ -192,7 +212,7 @@ local development.
 ## What v1 deliberately does not include
 
 - OpenFGA or attribute-based policies
-- Resource-level scoping (per pull zone, per DNS zone)
+- Resource-level scoping, except Bunny Sites by site name (no per pull zone or per DNS zone grants)
 - Refresh tokens: sign in again when the session ends
 - Third-party OIDC clients: White Rabbit is for CI/CD and the `rabbit` CLI only
 - Automatic endpoint discovery from bunny's OpenAPI specs

@@ -79,8 +79,8 @@ CI job (OIDC token)        rabbit CLI (browser + emailed code)
 
 ## Bunny integration rules
 
-- **Base URL:** `https://api.bunny.net` only. Do not add `video.bunnycdn.com` or `storage.bunnycdn.com` in v1.
-- **API families:** Core Platform (pull zones, DNS, statistics, regions), Shield, and the reviewed subset of Magic Containers (`/mc/…`) and Bunny Database (`/database/…`). Fields that hold secrets the capability does not cover (e.g. environment variable values) are listed in `RedactJsonFields` and redacted in the response.
+- **Base URL:** `https://api.bunny.net`, plus Edge Storage (`<region>.storage.bunnycdn.com`) for the files of a Bunny Site's own storage zone only (`sites.file.*`, `CredentialKind = StorageZonePassword`). Do not add `video.bunnycdn.com` or general storage access.
+- **API families:** Core Platform (pull zones, DNS, statistics, regions), Shield, Bunny Sites (site storage zones and their files, with the pull zone operations a deploy needs), and the reviewed subset of Magic Containers (`/mc/…`) and Bunny Database (`/database/…`). Fields that hold secrets the capability does not cover (e.g. environment variable values) are listed in `RedactJsonFields` and redacted in the response.
 - **Every proxied route must be listed in `BunnyOperationRegistry`.** An operation not in the registry is rejected with 404.
 - **Never auto-proxy based on OpenAPI alone.** OpenAPI specs may be used as a developer productivity aid (generating candidate lists, DTOs), but the registry is the sole runtime authority.
 - Bunny credentials are injected server side. They must never be returned to the client or logged.
@@ -134,7 +134,13 @@ DELETE /proxy/api.bunny.net/pullzone/{id}   -> pullzone.write
 
 ## Authorisation model
 
-White Rabbit uses capability-based authorisation. There is no resource-level scoping, no per-zone grant, and no policy engine in v1.
+White Rabbit uses capability-based authorisation. There is no policy engine and no per-zone grant, with one exception: **Bunny Sites are scoped by site name.**
+- A site's zones are named `sites-<site>-<6 characters>` by BunnyCLI (`SiteScope`). A binding with a `sites.*` capability names its sites (`--site`), and a session reaches only those; a human session reaches every site.
+- The `sites.*` operations (site storage zones, site files) never reach a zone that is not a site zone, for any caller.
+- Pull zone operations also accept a `sites.*` capability (`SiteCapability`). Granted that way, lists are filtered to the scope, an out-of-scope zone is 404, creates must name a scoped zone (a pull zone with that site's own storage zone as origin), and only `SiteAllowedBodyFields` are accepted. Granted through `pullzone.*`, they are account-wide as before.
+- `SitePolicy` checks the zone (read upstream by ID with the owner's key) before forwarding; `SiteResponses` filters lists.
+
+**Pull request bindings** (`--site-prefix example-site-pr-`) are the only bindings that accept `pull_request`, and nothing else: no ref, exactly the `pull_request` event, only `sites.*` capabilities. The session's one site is `<prefix><PR number>`, taken from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). Fork PRs get no OIDC token from GitHub or Forgejo. A PR job may have changed its own workflow, so it must never reach anything but its own preview site.
 
 **Deny by default.** If a route is not in the registry, return `404 Not Found`. If a route is in the registry but the client lacks the required capability, return `403 Forbidden`.
 
@@ -146,10 +152,10 @@ Per-request decision flow:
 1. Authenticate request (virtual credential in `AccessKey`; nothing else is accepted)
 2. Resolve operation from registry by method + path
 3. Return 404 if not found
-4. Check auth-only or capability requirement; return 403 if not met
+4. Check auth-only or capability requirement; return 403 if not met. For site-aware operations, check the site scope (404 outside it)
 5. Construct target URI
 6. Apply header rules (see below)
-7. Inject bunny credential
+7. Inject bunny credential (for a site file: that storage zone's password, looked up by `SitePolicy`)
 8. Forward via YARP
 9. Write audit event
 
@@ -201,13 +207,13 @@ Requirements:
 `FriendlyName`, `Xml` (AES-256-GCM encrypted with `DataProtection:EncryptionKey`), `CreatedUtc`
 
 ### WorkloadBindings
-`Id`, `OwnerUserId`, `Issuer`, `Repository`, `RepositoryId`, `RepositoryOwnerId`, `Ref`, `WorkflowRef`, `JobWorkflowRef`, `Environment`, `EventNames`, `Capabilities`, `Description`, `CreatedUtc`, `RevokedUtc`
+`Id`, `OwnerUserId`, `Issuer`, `Repository`, `RepositoryId`, `RepositoryOwnerId`, `Ref`, `WorkflowRef`, `JobWorkflowRef`, `Environment`, `EventNames`, `Capabilities`, `Sites`, `SitePrefix`, `Description`, `CreatedUtc`, `RevokedUtc`
 
 ### CliLoginCodes
 `Id`, `CodeHash`, `CodeChallenge`, `UserId`, `CreatedUtc`, `ExpiresUtc`, `ConsumedUtc`
 
 ### CliSessions / VirtualCredentials
-Opaque tokens stored as SHA-256 hashes only (`TokenHash`, `KeyHash`), with principal, owner, binding, lifetime and revocation.
+Opaque tokens stored as SHA-256 hashes only (`TokenHash`, `KeyHash`), with principal, owner, binding, lifetime and revocation. A session's `Sites` are the sites its `sites.*` capabilities reach (NULL for a human: every site).
 
 ### SecurityEvents
 Append-only audit trail; never holds tokens, keys, codes, query strings or bodies. Replaces the earlier `AuditEvents` table.
@@ -246,6 +252,7 @@ Everything else is done with the `rabbit` CLI. Do not add a web admin UI.
 
 ```
 ANY  /proxy/api.bunny.net/{**path}  virtual credential (AccessKey: wrk_…) only
+GET|PUT|DELETE /proxy/storage/{host}/{zone}/{**path}  virtual credential; a Bunny Site's files (sites.*)
 GET  /api/cli/config            federation audience and capabilities (no secrets)
 POST /api/cli/exchange          login code + verifier, or GitHub/Forgejo identity token -> session (wrs_…)
 POST /api/cli/credentials       session -> virtual Bunny credential (wrk_…), proxy only
@@ -320,7 +327,8 @@ export the variables in your shell or use a tool like `dotenv`.
 - Capability check logic — has capability, missing capability, auth-only passthrough
 - Login code generation and validation — expiry, already consumed, hash mismatch
 - Credential selection logic — correct credential type per `BunnyCredentialKind`
-- Binding rules — exact matching, forbidden events, GitHub-only claims
+- Binding rules — exact matching, forbidden events, GitHub-only claims, pull request bindings (`pull_request` → `<prefix><PR number>`)
+- Site scope — zone names, PR refs, list filtering
 
 ### Integration test targets (Nordray.WhiteRabbit.Tests.Integration)
 - `POST /auth/email/request-code` — creates login_codes row, sends email
@@ -367,7 +375,14 @@ with ASP.NET Data Protection (purpose `BunnyApiKey.v1`, key ring in the database
 - never be written to logs or SecurityEvents
 - never be returned in any HTTP response body or header (`whoami` reports only `has_bunny_key`)
 
-Only `AccountApiKey` is used; the other `BunnyCredentialKind` values are reserved.
+`StorageZonePassword` is used for the files of a site's storage zone: `SitePolicy` looks the zone up by name with the
+owner's key, injects its password as `AccessKey` and sends the request to the zone's own region host. Zone passwords
+(`Password`, `ReadOnlyPassword`) and pull zone secrets (`ZoneSecurityKey`, `AWSSigningKey`, `AWSSigningSecret`,
+`LogForwardingToken`, `Hostnames[].CertificateKey`) are redacted in every response. `StreamApiKey` is reserved.
+
+rabbit's forwarder is BunnyCLI's `HTTPS_PROXY` (local key as the proxy password). It terminates TLS for the Edge
+Storage hosts only, with a CA created for that run (`NODE_EXTRA_CA_CERTS`, name-constrained to `storage.bunnycdn.com`),
+and sends those requests to `/proxy/storage/<host>/<zone>/<path>`. Every other CONNECT is tunnelled unchanged.
 
 ---
 
@@ -375,11 +390,11 @@ Only `AccountApiKey` is used; the other `BunnyCredentialKind` values are reserve
 
 - Automatic OpenAPI-driven proxy generation
 - Generic proxy configuration outside the registry
-- OpenFGA or resource-level scoping
+- OpenFGA, or resource-level scoping beyond Bunny Sites' site names
 - Third-party OIDC clients, a consent screen, or an OIDC provider (Dex was removed on purpose)
 - A web admin UI (the `rabbit` CLI is the admin interface)
 - Password login or social login
-- Support for `video.bunnycdn.com` or `storage.bunnycdn.com` (v1 scope is `api.bunny.net` only)
+- Support for `video.bunnycdn.com`, or Edge Storage beyond the files of a Bunny Site's own storage zone
 
 ---
 

@@ -25,8 +25,11 @@ public static class JsonRedaction
             return null;
         }
         if (root is null) return null;
+        // A list endpoint may answer with a plain array: the paths then apply to each element.
+        var targets = root is JsonArray items ? items.ToList() : [root];
         foreach (var path in paths)
-            Apply(root, Parse(path), 0);
+            foreach (var target in targets)
+                Apply(target, Parse(path), 0);
         return root.ToJsonString();
     }
 

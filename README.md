@@ -69,7 +69,10 @@ Only these operations are allowed; everything else is refused.
 | Regions | List regions | (sign-in only) |
 | Account | Account details (`bunny whoami`) | `account.read` |
 | Statistics | Account statistics | `statistics.read` |
-| Pull Zones | List, get, create, update, delete | `pullzone.read`, `pullzone.write` |
+| Pull Zones | List, get, create, update, delete, purge, edge rules, force HTTPS | `pullzone.read`, `pullzone.write` |
+| Bunny Sites | Read your sites: their zones, state and files | `sites.read` |
+| Bunny Sites | Deploy: upload and delete files, publish, purge | `sites.deploy` |
+| Bunny Sites | Create and delete sites, e.g. per-PR previews | `sites.manage` |
 | DNS Zones | List, get, create, update, delete | `dns.read`, `dns.write` |
 | Shield | List, get, update zones | `shield.read`, `shield.write` |
 | Magic Containers | List and get apps, containers, regions, registries | `mc.read` |
@@ -80,11 +83,26 @@ Only these operations are allowed; everything else is refused.
 | Bunny Database | Create and delete databases | `db.manage` |
 | Bunny Database | Create a database access token | `db.token` |
 
-- **Secrets stay hidden.** Environment variable values and registry passwords come back as
-  `[redacted by White Rabbit]`. `mc.env` can still add, change and remove variables without reading them.
+- **Secrets stay hidden.** Environment variable values, registry passwords, pull zone keys and storage zone passwords
+  come back as `[redacted by White Rabbit]`. `mc.env` can still add, change and remove variables without reading them.
 - **`mc.deploy` changes only the image**, nothing else on the container.
 - **`mc.manage` and `db.manage` can delete anything** on the account, not just what they created.
-- **Not supported:** Edge Storage files, Stream, log forwarding and registry changes.
+- **`sites.*` reach only the sites a binding names** (`--site`), or one preview site per pull request
+  (`--site-prefix`). Site files are uploaded without the CI job ever holding the storage zone password.
+- **Not supported:** Edge Storage files outside Bunny Sites, custom domains for sites, Stream, log forwarding and registry changes.
+
+## Preview sites for pull requests
+
+Every pull request can get its own temporary copy of a Bunny Site, at its own URL, before anything is merged, like
+Firebase Hosting's preview channels or Netlify's deploy previews. The PR's job creates `example-site-pr-<N>` on its
+first run, deploys every push to it and posts the URL on the PR; closing the PR deletes the site. Reviewers look at the
+real result, not a screenshot, and production is never touched.
+
+Until now that meant giving every PR job the account key. With White Rabbit it takes a **pull request binding**
+(`--site-prefix example-site-pr-`): each `pull_request` job reaches exactly one site, `<prefix><PR number>`, with the
+number taken from the job's own OIDC token. A PR job can change its own workflow, but it still reaches nothing except
+its own preview. Pull requests from forks get no OIDC token on GitHub or Forgejo, so they never get a preview.
+Bindings and workflow steps: [Moving a workflow](docs/migrating.md#bunny-sites-and-preview-sites).
 
 ## Why you can trust it
 
@@ -92,7 +110,7 @@ Only these operations are allowed; everything else is refused.
   returned or logged.
 - **Deny by default.** Unknown operations get 404, missing capabilities 403.
 - **Exact matching for CI.** A job gets in only if issuer, repository, workflow and event match a binding you created.
-  Pull request events are never allowed.
+  Pull request jobs get in only through a pull request binding, which reaches just their own preview site.
 - **Short-lived.** Credentials last 5 minutes, CI sessions 1 hour, your own sessions 8 hours.
 - **No passwords.** Sign-in is by emailed one-time code, rate limited.
 - **Audited.** Every sign-in, credential and proxied call is recorded: `rabbit admin audit`.

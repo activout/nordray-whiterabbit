@@ -12,6 +12,8 @@ using Nordray.WhiteRabbit.Core.Services;
 using Nordray.WhiteRabbit.Infrastructure;
 using Nordray.WhiteRabbit.Infrastructure.Database;
 using Nordray.WhiteRabbit.Infrastructure.Encryption;
+using Nordray.WhiteRabbit.Core;
+using Nordray.WhiteRabbit.Core.Sites;
 using Nordray.WhiteRabbit.Proxy;
 using Nordray.WhiteRabbit.Web;
 using Nordray.WhiteRabbit.Web.Cli;
@@ -61,6 +63,8 @@ builder.Services.AddScoped<CliPrincipalResolver>();
 builder.Services.AddScoped<SecurityAudit>();
 builder.Services.AddSingleton<BunnyProxyGate>();
 builder.Services.AddSingleton<ProxyRequestBodyPolicy>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<SitePolicy>();
 builder.Services.AddHttpContextAccessor();
 
 // --- Authentication ---
@@ -178,6 +182,9 @@ var bunnyRoutes = bunnyRegistry.GetAll().Select(op => new RouteConfig
         [ProxyRequestBodyPolicy.RestoreMetadataKey] = op.RestoreRedactedEnvironmentFrom ?? "",
         [ProxyRequestBodyPolicy.RestoreAppMetadataKey] = op.RestoreRedactedAppEnvironmentFrom ?? "",
         [ProxyRequestBodyPolicy.AllowedFieldsMetadataKey] = string.Join(';', op.AllowedBodyFields ?? []),
+        ["SiteCapability"] = op.SiteCapability ?? "",
+        ["SiteResource"] = op.SiteResource.ToString(),
+        ["SiteAllowedBodyFields"] = string.Join(';', op.SiteAllowedBodyFields ?? []),
     },
 }).ToList();
 
@@ -199,14 +206,29 @@ builder.Services.AddReverseProxy()
         // pipeline middleware stored in Items.
         if (ctx.Route.RouteId.StartsWith("bunny.", StringComparison.Ordinal))
         {
-            ctx.AddPathRemovePrefix("/proxy/api.bunny.net");
+            var siteResource = ctx.Route.Metadata?.GetValueOrDefault("SiteResource");
+            var storageFile = siteResource == nameof(SiteResource.StorageFile);
+            if (!storageFile) ctx.AddPathRemovePrefix("/proxy/api.bunny.net");
             // Same list as the rabbit CLI forwarder: no caller credential or identity reaches bunny.
             foreach (var header in (string[])["AccessKey", "Authorization", "Cookie", "Proxy-Authorization", .. RemoteIdentityHeaders])
                 ctx.AddRequestHeaderRemove(header);
             ctx.AddRequestTransform(transform =>
             {
-                transform.ProxyRequest.Headers.Host = "api.bunny.net";
-                if (transform.HttpContext.Items[BunnyProxyGate.AccessKeyItem] is string apiKey)
+                var http = transform.HttpContext;
+                if (storageFile)
+                {
+                    // /proxy/storage/<host>/<zone>/<path> goes to https://<the zone's own region host>/<zone>/<path>,
+                    // as SitePolicy built and checked it.
+                    if (http.Items[SitePolicy.StorageUriItem] is not Uri uri)
+                        throw new InvalidOperationException("Storage request without a checked storage URI.");
+                    transform.ProxyRequest.RequestUri = uri;
+                    transform.ProxyRequest.Headers.Host = uri.Host;
+                }
+                else
+                {
+                    transform.ProxyRequest.Headers.Host = "api.bunny.net";
+                }
+                if (http.Items[BunnyProxyGate.AccessKeyItem] is string apiKey)
                     transform.ProxyRequest.Headers.TryAddWithoutValidation("AccessKey", apiKey);
                 return ValueTask.CompletedTask;
             });
@@ -226,6 +248,10 @@ builder.Services.AddReverseProxy()
                         return;
                     var body = await transform.ProxyResponse.Content.ReadAsStringAsync(transform.HttpContext.RequestAborted);
                     var redacted = JsonRedaction.Redact(body, redact);
+                    // A zone list reached through the sites.* capabilities shows only the caller's site zones.
+                    if (redacted is not null && siteResource is nameof(SiteResource.PullZoneList) or nameof(SiteResource.StorageZoneList)
+                        && transform.HttpContext.Items[BunnyProxyGate.SiteAccessItem] is SiteAccess access)
+                        redacted = SiteResponses.Filter(redacted, name => SiteScope.Allows(access.Scope, name));
                     var response = transform.HttpContext.Response;
                     transform.SuppressResponseBody = true;
                     response.Headers.Remove("Content-Encoding");
@@ -322,6 +348,7 @@ app.MapRazorPages();
 // BunnyProxyGate enforces authentication (virtual credential), the sign-in allow-list, capabilities and server-side credential injection for bunny routes before YARP forwards the request.
 var bunnyGate = app.Services.GetRequiredService<BunnyProxyGate>();
 var bodyPolicy = app.Services.GetRequiredService<ProxyRequestBodyPolicy>();
+var sitePolicy = app.Services.GetRequiredService<SitePolicy>();
 app.MapReverseProxy(proxyPipeline =>
 {
     proxyPipeline.Use(async (ctx, next) =>
@@ -331,7 +358,7 @@ app.MapReverseProxy(proxyPipeline =>
         {
             // After the gate (which authorises and loads the owner's key): check the body's fields and restore
             // redacted environment values.
-            await bunnyGate.InvokeAsync(ctx, () => bodyPolicy.InvokeAsync(ctx, route, () => next()), route);
+            await bunnyGate.InvokeAsync(ctx, () => sitePolicy.InvokeAsync(ctx, route, () => bodyPolicy.InvokeAsync(ctx, route, () => next())), route);
             return;
         }
 

@@ -119,6 +119,8 @@ type Binding struct {
 	Environment       string    `json:"environment,omitempty"`
 	Events            []string  `json:"events,omitempty"`
 	Capabilities      []string  `json:"capabilities"`
+	Sites             []string  `json:"sites,omitempty"`
+	SitePrefix        string    `json:"site_prefix,omitempty"`
 	Description       string    `json:"description,omitempty"`
 	CreatedUtc        time.Time `json:"created_utc,omitempty"`
 }

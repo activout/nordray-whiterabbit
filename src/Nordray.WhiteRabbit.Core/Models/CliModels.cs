@@ -27,6 +27,10 @@ public sealed record WorkloadBinding
     public string EventNames { get; init; } = "";
     /// <summary>Space-separated.</summary>
     public string Capabilities { get; init; } = "";
+    /// <summary>Space-separated site names the sites.* capabilities reach, or null.</summary>
+    public string? Sites { get; init; }
+    /// <summary>A pull request binding: pull_request jobs reach only the site <c>&lt;prefix&gt;&lt;PR number&gt;</c>.</summary>
+    public string? SitePrefix { get; init; }
     public string? Description { get; init; }
     public DateTime CreatedUtc { get; init; }
     public DateTime? RevokedUtc { get; init; }
@@ -59,6 +63,8 @@ public sealed record CliSession
     public string? WorkflowRef { get; init; }
     public string? Ref { get; init; }
     public string? RunId { get; init; }
+    /// <summary>Space-separated sites the session may touch with sites.*; null for every site (a human session).</summary>
+    public string? Sites { get; init; }
     public DateTime CreatedUtc { get; init; }
     public DateTime ExpiresUtc { get; init; }
     public DateTime? RevokedUtc { get; init; }

@@ -29,6 +29,48 @@ A workflow that creates or replaces the whole app (`POST /mc/apps`, `PUT /mc/app
 also lets it delete any app. When it sends environment values from CI secrets, prefer creating the app and its
 environment once by hand and patching only the image.
 
+## Bunny Sites and preview sites
+
+`BunnyWay/actions/deploy-site` takes the key, so call BunnyCLI through rabbit instead. Its JSON has the deploy ID
+(`.id`) and the URL (`.production`). A site with [previews](../README.md#preview-sites-for-pull-requests) has three
+bindings, one per workflow:
+
+```sh
+# Production: v* tags deploy the site itself.
+rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-production.yml \
+  --site example-site --capability sites.read --capability sites.deploy --description "example-site production"
+# Previews: each pull request creates and updates example-site-pr-<N>.
+rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-preview.yml \
+  --site-prefix example-site-pr- --capability sites.read --capability sites.deploy --capability sites.manage --description "example-site previews"
+# Cleanup: closing the pull request deletes its preview.
+rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-cleanup.yml \
+  --site-prefix example-site-pr- --capability sites.read --capability sites.manage --description "example-site preview cleanup"
+```
+
+The preview job (`on: pull_request`, types `opened`, `synchronize`, `reopened`):
+
+```sh
+SITE="example-site-pr-$PR_NUMBER"
+rabbit -- sites show "$SITE" > /dev/null 2>&1 || rabbit -- sites create "$SITE" --region SE --no-link --output json
+URL=$(rabbit -- sites deploy dist --site "$SITE" --force --output json | jq -r .production)
+# then post or update "$URL" as a PR comment with the job's own token
+```
+
+The cleanup job (`on: pull_request`, type `closed`):
+
+```sh
+SITE="example-site-pr-$PR_NUMBER"
+if rabbit -- sites show "$SITE" > /dev/null 2>&1; then rabbit -- sites delete "$SITE" --force; fi
+```
+
+Production is the same `sites deploy` with `--site example-site`.
+
+- Custom domains (`bunny sites domains`) and DNS stay manual: they need `pullzone.write` and `dns.write` on the whole
+  account.
+- Sites imported with `bunny sites create --from-zone` keep their old zone names, so the `sites.*` capabilities cannot
+  reach them. Recreate such a site with `bunny sites create`, deploy it and move its domain, or keep its workflow on
+  the key.
+
 ## A short-lived database token
 
 For example for a script that writes to a Bunny Database. Needs `db.read` + `db.token`:

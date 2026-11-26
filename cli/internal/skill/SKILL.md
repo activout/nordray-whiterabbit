@@ -56,11 +56,19 @@ There are no refresh tokens: sign in again when the session expires.
 | `db.read` | Read databases, limits, regions, status | `db list`, `db show` |
 | `db.manage` | Create and delete databases | |
 | `db.token` | Create database tokens | `db tokens create`, `db shell` |
+| `sites.read` | Read your Bunny Sites, their zones, deploys and files | `sites show`, `sites list`, `sites deployments list` |
+| `sites.deploy` | Upload and delete site files, publish a deploy, purge | `sites deploy`, `sites deployments prune/publish` |
+| `sites.manage` | Create and delete sites | `sites create`, `sites delete` (per-PR previews) |
 
-Every capability applies to the whole account: `mc.deploy` can change any app.
+Every capability applies to the whole account (`mc.deploy` can change any app), except `sites.*`: a binding's
+`sites.*` reach only the sites it names with `--site`, or one preview site per PR with `--site-prefix`. A human
+session reaches every site. A site's zones are `sites-<site>-<suffix>`; a site imported with `--from-zone` keeps
+other names and is out of reach: recreate it with `bunny sites create` (deploy, then move its domain), or leave its
+workflow on the key.
 
 Not possible through rabbit:
-- `storage files` (it needs the zone password);
+- `storage files` on a zone that is not a Bunny Site's (it needs the zone password);
+- `sites domains` and DNS for a site (they need `pullzone.write` and `dns.write` on the whole account);
 - reading environment values (shown as `[redacted by White Rabbit]`);
 - log forwarding;
 - any operation missing from the registry.
@@ -74,7 +82,8 @@ Not possible through rabbit:
 | No session / expired | `! rabbit auth login` again |
 | 403 `bunny_api_key_not_configured` | The user stores their key: `! rabbit admin key set` |
 | CI: 401 `no_matching_binding` | No binding matches the job's repository, ref, workflow or event |
-| CI: 401 `event_not_allowed` | A `pull_request` job. These never get a credential, by design |
+| CI: 401 `event_not_allowed` | A `pull_request` job without a pull request binding (`--site-prefix`), or from another workflow |
+| 404 on a site, zone or site file | Outside the session's sites: check the binding's `--site` / `--site-prefix` |
 
 `rabbit admin audit --since 1h` (interactive session only) shows what was allowed or denied, with the reason, for the
 user and their CI bindings. A CI exchange denied as `no_matching_binding` has no owner yet, so it is not listed.
@@ -99,7 +108,7 @@ Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-ac
 
 1. Read the workflow and list every Bunny call: `bunny …`, curl or other HTTP with `AccessKey`, actions that take
    the key (e.g. `BunnyWay/actions/*`). Map each to a capability from the table. If one has no capability (e.g.
-   `storage files`, or a 404 with `RABBIT_DEBUG=1`), tell the user and leave that step on its key; don't widen anything.
+   `storage files` on a non-site zone, or a 404 with `RABBIT_DEBUG=1`), tell the user and leave that step on its key; don't widen anything.
 2. Propose one binding with exactly those capabilities and the workflow's ref and trigger events; get the user's
    confirmation, then run `rabbit admin bindings add`.
 3. Edit the workflow:
@@ -110,6 +119,14 @@ Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-ac
    `rabbit admin audit --since 1h`. Only after a green run does the user delete the repository's Bunny key secret.
 
 Things that trip up a move (`docs/migrating.md` in the repository has the full recipes):
+- **Preview sites for pull requests.** Like Firebase Hosting's preview channels: each PR gets its own temporary site
+  `NAME-pr-<N>` at its own URL, deployed on every push and deleted when the PR closes, so reviewers see the result
+  before merging. The PR's jobs use a pull request binding (`--site-prefix NAME-pr-`), which reaches only that one
+  site, so the job needs no key and cannot touch production. Fork PRs get no token, so no preview.
+- **Bunny Sites.** Replace `BunnyWay/actions/deploy-site` (it takes the key) with
+  `rabbit -- sites deploy DIR --site NAME --force --output json` (`.production` is the URL, `.id` the deploy ID).
+  Production: a binding with `--site NAME` and `sites.read` + `sites.deploy`. Previews and their cleanup: one
+  binding per workflow with `--site-prefix NAME-pr-`; previews need `sites.manage` to create, cleanup to delete.
 - **Deploys.** A "create or update the app" step (`POST /mc/apps`, `PUT /mc/apps/{id}` with the whole app, often with
   environment values from CI secrets) needs `mc.manage`. Usually better: `mc.read` + `mc.deploy`, and patch only the
   image (`PATCH /mc/apps/{id}/containers/{cid}` with `imageTag`, `imageRegistryId`, `imageNamespace`, `imageName`);
@@ -155,7 +172,10 @@ rabbit admin bindings rm 3
     any branch can otherwise change the workflow there and use the binding.
 - `--workflow` takes the workflow file path. The binding stores `<repository>/<path>@<ref>`, and the job's
   `workflow_ref` must match it exactly.
-- `--event` defaults to `push` and `workflow_dispatch`. `pull_request` is always refused.
+- `--event` defaults to `push` and `workflow_dispatch`. `pull_request` is refused except on a pull request binding.
+- `--site NAME` (repeatable) names the Bunny Sites the binding's `sites.*` capabilities reach; required with `sites.*`.
+- `--site-prefix PREFIX` makes a pull request binding: only `pull_request` jobs (the default event then), no `--ref`, only
+  `sites.*`, and each job reaches exactly the site `<prefix><PR number>`. Fork PRs get no OIDC token at all.
 - GitHub only: `--environment` and `--job-workflow-ref` narrow the binding further.
 - **There is no edit.** To change a binding, `rm` the old one and add the new one; two bindings that both match a job
   are refused as ambiguous.
