@@ -1,378 +1,130 @@
 # Nordray White Rabbit
 
-Keeps your **bunny.net API key out of CI/CD**. White Rabbit holds the key server side. GitHub Actions and Forgejo
-Actions jobs prove who they are with their own OIDC token, and get short-lived virtual credentials that can do only
-what you allowed that workflow.
+**Keep your bunny.net API key out of CI/CD.**
 
-## Why
+An open source project by [**Nordray**](https://nordray.eu) and [**Activout**](https://activout.se).
 
-bunny.net has one all-powerful account API key and no native OIDC or scoped keys. Putting that key in a CI secret
-means every workflow, and anyone who can change one, holds full control of the account. White Rabbit is the layer in
-between: a deploy job gets `mc.read` + `mc.deploy` for five minutes, and nothing else.
+bunny.net has one all-powerful account API key and no OIDC or scoped keys. Put it in a CI secret and every workflow,
+and anyone who can edit one, controls your whole account. White Rabbit keeps the key on its server. GitHub Actions and
+Forgejo Actions jobs sign in with their own OIDC token and get a five-minute credential that can do only what you
+allowed that workflow, for example `mc.read` + `mc.deploy` and nothing else.
 
-## How it works
+The same works at your terminal, so an AI agent can run BunnyCLI without ever seeing the key.
 
-```
-GitHub / Forgejo Actions job            you, at a terminal
-   │ job OIDC token                       │ rabbit auth login (browser + emailed code)
-   ▼                                      ▼
-┌──────────────────────────────────────────────────┐
-│              Nordray White Rabbit                │
-│  • token exchange      CI token / login code → session (wrs_…)
-│  • workload bindings   repository + ref + workflow → capabilities
-│  • virtual credentials wrk_…, 5 minutes          │
-│  • operation registry  deny by default (404/403) │
-│  • key injection       your bunny.net key, never returned
-│  • audit log           every decision            │
-└─────────────────────────┬────────────────────────┘
-                          ▼
-                   https://api.bunny.net
+No bunny.net account yet? Sign up at [bunny.net](https://bunny.net?ref=ch5ir79hyc) (affiliate link: Activout gets a commission, you pay the same price).
+
+## Get started
+
+**1. Install `rabbit`** and [BunnyCLI](https://www.npmjs.com/package/@bunny.net/cli), which rabbit runs for you:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/activout/nordray-whiterabbit/main/scripts/install-rabbit.sh | sh
+npm i -g @bunny.net/cli
 ```
 
-1. **Once, as the owner:** `rabbit auth login` signs you in with a 6-digit code sent by email. `rabbit admin key set`
-   stores your bunny.net API key, encrypted. `rabbit admin bindings add …` allows one workflow of one repository a set
-   of capabilities.
-2. **In CI:** `rabbit -- <bunny arguments>` exchanges the job's OIDC token. Only a job that matches a binding
-   exactly gets a session.
-3. Each BunnyCLI call goes through White Rabbit's proxy with a virtual credential. The operation must be in the
-   hard-coded registry (`404` otherwise) and its capability must be in the binding (`403` otherwise). Then the owner's
-   key is injected and the request is forwarded to `https://api.bunny.net`.
+**2. Install the agent skill, before anything else.** It teaches Claude Code, Codex, Gemini CLI, Copilot and OpenCode
+how to use rabbit: which capabilities a command needs, how to set up bindings and how to move a workflow off its API
+key. With it, your agent can do the rest of this list with you.
 
-The same `rabbit -- …` works at your own terminal, so an AI agent can run BunnyCLI without ever seeing the key
-(`rabbit --capabilities a,b -- …` limits what it may do).
+```sh
+rabbit skill install    # rerun after upgrading rabbit
+```
 
-## Supported bunny.net APIs
+**3. Sign in and store your bunny.net key, once:**
+
+```sh
+rabbit env add prod https://whiterabbit.example.com   # your White Rabbit server
+rabbit auth login                                      # browser + emailed one-time code
+rabbit admin key set                                   # hidden prompt; never shown again
+```
+
+**4. Run BunnyCLI through rabbit.** Everything after `--` goes to `bunny` unchanged:
+
+```sh
+rabbit -- whoami
+rabbit -- api GET /pullzone
+rabbit --capabilities dns.read -- api GET /dnszone   # limit what one command, or agent, may do
+```
+
+**5. Let a CI workflow in.** A binding allows one workflow of one repository a set of capabilities:
+
+```sh
+rabbit admin bindings add --issuer github --repository OWNER/REPO --repository-id 123456789 \
+  --ref refs/heads/main --workflow .github/workflows/deploy.yml \
+  --capability mc.read --capability mc.deploy --description "Deploy"
+```
+
+It prints the lines the workflow needs. Replace `bunny …` with `rabbit -- …`, check the run with
+`rabbit admin audit --since 1h`, then delete the `BUNNYNET_API_KEY` secret. Examples: [`examples/ci`](examples/ci) and
+[Moving a workflow](docs/migrating.md).
+
+All commands and options: [`cli/README.md`](cli/README.md).
+
+## Capabilities
+
+Only these operations are allowed; everything else is refused.
 
 | Area | Operations | Capabilities |
 |---|---|---|
 | Regions | List regions | (sign-in only) |
-| Account | Account details (`bunny whoami`, the account ID for `bunny apps deploy`) | `account.read` |
-| Statistics | Read account statistics | `statistics.read` |
+| Account | Account details (`bunny whoami`) | `account.read` |
+| Statistics | Account statistics | `statistics.read` |
 | Pull Zones | List, get, create, update, delete, purge, edge rules, force HTTPS | `pullzone.read`, `pullzone.write` |
-| Bunny Sites | Read your sites: their storage zones, pull zones, state and files | `sites.read` |
-| Bunny Sites | Deploy: upload and delete files, publish (edge rules, cache settings, not-found page), purge | `sites.deploy` |
+| Bunny Sites | Read your sites: their zones, state and files | `sites.read` |
+| Bunny Sites | Deploy: upload and delete files, publish, purge | `sites.deploy` |
 | Bunny Sites | Create and delete sites, e.g. per-PR previews | `sites.manage` |
 | DNS Zones | List, get, create, update, delete | `dns.read`, `dns.write` |
-| Shield | List zones, get zone, update zone | `shield.read`, `shield.write` |
-| Magic Containers | List and get apps, app overview, get container, regions, list registries | `mc.read` |
+| Shield | List, get, update zones | `shield.read`, `shield.write` |
+| Magic Containers | List and get apps, containers, regions, registries | `mc.read` |
 | Magic Containers | Change a container's image, deploy, restart | `mc.deploy` |
 | Magic Containers | Set a container's environment variables | `mc.env` |
-| Magic Containers | Create, replace (`PUT /mc/apps/{id}`) and delete apps, e.g. preview deployments | `mc.manage` |
-| Bunny Database | Configuration, limits, optimal regions, list and get databases, database status | `db.read` |
+| Magic Containers | Create, replace and delete apps (e.g. preview deployments) | `mc.manage` |
+| Bunny Database | List, get and inspect databases | `db.read` |
 | Bunny Database | Create and delete databases | `db.manage` |
-| Bunny Database | Create a database access token (the token itself gives direct access to that database) | `db.token` |
+| Bunny Database | Create a database access token | `db.token` |
 
-**Redaction.** Some responses hold secrets the capability does not cover. White Rabbit replaces those fields with `[redacted by White Rabbit]` before the caller sees them:
-- container environment variable values, in the app, app-create, container, container-update and set-environment responses;
-- registry password fragments, in the registry list;
-- pull zone secrets (`ZoneSecurityKey`, `AWSSigningKey`, `AWSSigningSecret`, `LogForwardingToken`, custom certificates' `CertificateKey`), in every pull zone response;
-- storage zone passwords (`Password`, `ReadOnlyPassword`), in every storage zone response.
+- **Secrets stay hidden.** Environment variable values, registry passwords, pull zone keys and storage zone passwords
+  come back as `[redacted by White Rabbit]`. `mc.env` can still add, change and remove variables without reading them.
+- **`mc.deploy` changes only the image**, nothing else on the container.
+- **`mc.manage` and `db.manage` can delete anything** on the account, not just what they created.
+- **`sites.*` reach only the sites a binding names** (`--site`), or one preview site per pull request
+  (`--site-prefix`). Site files are uploaded without the CI job ever holding the storage zone password.
+- **Not supported:** Edge Storage files outside Bunny Sites, custom domains for sites, Stream, log forwarding and registry changes.
 
-**Bunny Sites are scoped by site name.** A site's storage zone and pull zone are named `sites-<site>-<6 characters>`
-by BunnyCLI. A binding's `sites.*` capabilities reach only the sites it names (`--site`); a human session reaches every
-site. Lists are filtered, anything else is "not found", and a new zone must belong to one of those sites. The
-`sites.*` capabilities never reach a storage zone that is not a site's. Pull zone operations granted through
-`sites.*` accept only the fields a site deploy sends; `pullzone.*` stays account-wide.
+## Preview sites for pull requests
 
-**Site files without the zone password.** `bunny sites deploy` uploads straight to `<region>.storage.bunnycdn.com`
-with the zone password, and BunnyCLI has no setting to point it elsewhere. `rabbit` is BunnyCLI's HTTPS proxy: it
-terminates TLS for the Edge Storage hosts only, with a certificate authority that exists for that one run
-(`NODE_EXTRA_CA_CERTS`, valid only for `storage.bunnycdn.com` names), and sends those requests to White Rabbit, which
-injects the zone's password. Everything else is tunnelled unchanged. BunnyCLI only ever sees the redaction placeholder.
-
-Everything else, such as IDs and names, is returned unchanged. A successful response that cannot be parsed for redaction is refused (502), not passed through.
-
-**Setting environment variables keeps redacted values.** Setting a container's environment replaces all of its variables, and tools such as `bunny apps env set` send back every variable they read. White Rabbit gave them the placeholder, so before forwarding, each value equal to `[redacted by White Rabbit]` is replaced with that variable's current value, read with the owner's key. A placeholder for a variable the container does not have is refused (400). If the current values cannot be read, nothing is written (502). So `mc.env` can add, change and remove variables without ever reading one.
-
-**Replacing an app keeps redacted values too.** `PUT /mc/apps/{id}` replaces the whole app, and a workflow that reads the app, changes it and sends it back sends the placeholders back. Each placeholder in a container's `environmentVariables` gets that variable's current value from the current app's container with the same `id` (or, without one, the same `name`). A placeholder that matches no current variable, or one anywhere else in the body, is refused (400). If the current app cannot be read, nothing is written (502).
-
-**`mc.deploy` changes only the image.** Bunny's container update also accepts environment variables, endpoints, volumes, probes and the entry point. White Rabbit forwards only the image fields and refuses any other field (400), even when it is null or empty.
-
-**Each capability has one description**, in `BunnyOperationRegistry`, covering every operation it allows. `rabbit` and the capability table both show that text.
-
-**Deletes are explicit.** `mc.manage` and `db.manage` can delete any app or database on the account, not just ones they created. Grant them only to bindings that need them, e.g. a workflow that cleans up preview deployments.
-
-**Left out on purpose:** log forwarding (its responses carry tokens), registry changes and single-registry reads, separate volume and endpoint changes (replacing the whole app with `mc.manage` covers them), and database groups and their tokens.
-
-New endpoints require a code review and an explicit entry in `BunnyOperationRegistry`. Bunny's OpenAPI specs are used for reference only — presence in the spec does not make an endpoint automatically available.
-
-## Security model
-
-- **Deny by default.** Every proxied operation is explicitly registered.
-- **Capability-based access.** Each workload binding lists the capabilities (`pullzone.read`, `mc.deploy`, …) its workflow may use; each virtual credential can be narrowed further.
-- **Credentials never leave the server.** The owner's bunny.net API key is stored encrypted in the database and injected into outgoing requests. CI jobs and the CLI never see it.
-- **Email one-time codes.** No passwords. Codes are SHA-256 hashed, expire in 10 minutes, and are invalidated after first use.
-- **Rate limiting.** Per-email and per-IP limits on code requests and verification attempts.
-- **Header stripping.** Inbound `AccessKey`, `Authorization` and `X-Remote-*` headers are never forwarded to bunny.net.
-
-## Technology stack
-
-| Concern | Choice |
-|---|---|
-| Web host | ASP.NET Core 10 |
-| Token validation | `Microsoft.IdentityModel` (GitHub and Forgejo Actions OIDC tokens) |
-| Proxy forwarding | YARP (reverse proxy pipeline) |
-| Database | libSQL (a local file, or [Bunny Database](https://bunny.net/database/) when deployed) via [Activout.DatabaseClient](https://github.com/twogood/Activout.DatabaseClient) and its `LibSqlGateway` |
-| Email | Mailjet (SMTP/Mailpit fallback for local dev) |
-| Tests | xUnit, RichardSzalay.MockHttp |
-
-## Running locally
-
-Prerequisites: Docker, .NET 11 SDK.
-
-```bash
-# Start Mailpit (catches the login emails)
-docker compose up mailpit
-
-# The two required settings
-export WhiteRabbit_DataProtection__EncryptionKey=$(openssl rand -base64 32)
-export WhiteRabbit_Access__AllowedEmails__0=you@example.com
-
-# Run White Rabbit with hot reload
-dotnet watch --project src/Nordray.WhiteRabbit.Web
-```
-
-Then `rabbit --server http://localhost:8080 auth login`, and look in [http://localhost:8025](http://localhost:8025) (Mailpit) for the code.
-
-To run everything in Docker:
-
-```bash
-cp .env.example .env   # fill in secrets if needed
-docker compose up
-```
-
-## Configuration
-
-Secrets are **never** stored in `appsettings` files. All sensitive values are supplied as `WhiteRabbit_`-prefixed environment variables (`__` maps to `:` in the config hierarchy):
-
-| Variable | Purpose |
-|---|---|
-| `WhiteRabbit_DataProtection__EncryptionKey` | **Required.** Base64 of 32 random bytes (`openssl rand -base64 32`). Encrypts the Data Protection key ring stored in the database, which in turn protects every stored bunny.net API key. Keep it with the database backup, separately protected: without it the stored keys cannot be read. White Rabbit refuses to start without it |
-| `WhiteRabbit_Database__ConnectionString` | `Data Source=<file>` locally, or `Data Source=https://<database>.lite.bunnydb.net;Auth Token=<token>` for Bunny Database |
-| `WhiteRabbit_Mailjet__ApiKey` | Mailjet API key (omit to use SMTP fallback) |
-| `WhiteRabbit_Mailjet__SecretKey` | Mailjet secret key |
-| `WhiteRabbit_Mailjet__FromEmail` | Sender address |
-
-Non-secret settings that every instance must choose:
-
-| Setting | Purpose |
-|---|---|
-| `Access:AllowedEmails`, `Access:AllowedDomains` | Who may sign in (e.g. `WhiteRabbit_Access__AllowedEmails__0=you@example.com`). **Empty means nobody**, so an instance never collects strangers' bunny.net keys by accident. Removing an address ends its sessions and proxy access |
-
-See [`.env.example`](.env.example) for a full template.
-
-### rabbit CLI and CI federation
-
-The Go command-line client is in [`cli/`](cli/README.md) (install, usage, CI examples in [`examples/ci`](examples/ci)). The server side:
-
-The `rabbit` CLI never holds a real bunny.net key. It exchanges a login code or a CI identity token for a White Rabbit
-session, then asks for short-lived **virtual credentials** that only White Rabbit's proxy accepts.
-
-| Endpoint | Auth | Purpose |
-|---|---|---|
-| `GET /cli/login?port=&state=&code_challenge=` | browser sign-in (email code) | After an explicit confirmation, redirects to `http://127.0.0.1:{port}/callback` with a one-time code `wrc_…` (2 minutes) bound to the PKCE S256 challenge |
-| `POST /api/cli/exchange` `{"code": "…", "code_verifier": "…"}` or `{"subject_token": "…"}` | none (rate limited) | Exchanges a login code with its verifier, or a GitHub Actions or Forgejo Actions token, for a session token `wrs_…`. Humans get 8 hours with every capability, CI workloads 60 minutes with their binding's |
-| `POST /api/cli/credentials` `{"capabilities": […]}` | `Authorization: Bearer wrs_…` | Issues a virtual credential `wrk_…` (5 minutes), never broader than the session. Send it as `AccessKey` to `/proxy/api.bunny.net/…`, or to `/proxy/storage/<host>/<zone>/…` for a site's files |
-| `GET /api/cli/whoami` | session | The authenticated human or workload and its current capabilities |
-| `POST /api/cli/revoke` `{"credential_id": "…"?}` | session | Revokes one credential, or the session and all its credentials |
-| `GET/POST /api/admin/bindings`, `DELETE /api/admin/bindings/{id}` | human session only | Lists, creates and revokes the caller's own CI workload bindings |
-| `GET /api/admin/audit?since=&binding_id=&limit=` | human session only | The caller's own security events, newest first (default: last 24 hours, 50 events, at most 500) |
-| `PUT /api/admin/bunny-key` `{"api_key": "…"}`, `DELETE /api/admin/bunny-key` | human session only | Stores (encrypted) or removes the caller's bunny.net API key. Never returned; `whoami` only says `has_bunny_key` |
-
-- **Sessions and virtual credentials** are opaque random tokens; only their SHA-256 hashes are stored. They are checked on every use against the sign-in allow-list and, for CI, the workload binding, so revoking either takes effect immediately.
-- **Login codes** are opaque, stored as SHA-256 hashes, valid for 2 minutes and consumed on first use, even when the verifier is wrong. The redirect always goes to `127.0.0.1`, never to a caller-supplied URL.
-- **The proxy** accepts only a virtual credential in `AccessKey`. Anything else, including a real bunny.net key, is refused and never forwarded. The owner's own stored key is injected server side.
-- **CI tokens** are validated per configured issuer: exact `iss`, audience `Federation:Audience`, RS256 only (checked before any key lookup), expiry and not-before, and a lifetime of at most `Federation:MaxTokenLifetime`. Signing keys come from the issuer's discovery document; only configured issuers are ever fetched.
-- **Workload bindings** decide what a CI identity may do. They are created only through the admin API by a human, never from repository content.
-  - Every field is matched exactly: issuer, repository, ref (`refs/heads/…` or `refs/tags/…` only) and `workflow_ref`, whose `@ref` must equal the ref.
-  - The ref is optional. A binding without one accepts the workflow from any branch or tag, so the repository's own protections decide which refs are trusted: who may push which branches and tags, rulesets, and on GitHub a protected `environment` on the binding. The workflow must still come from the ref being built.
-  - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never allowed, and `pull_request` only on a pull request binding.
-  - **Pull request bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own preview.
-  - **GitHub** bindings also require the immutable `repository_id`, and optionally `repository_owner_id`, `environment` and `job_workflow_ref`.
-  - **Forgejo** (tested on 15.0.12) does not issue IDs or environments. Its bindings match on names, so renaming or transferring a repository is a known risk. Forgejo's `ref_protected` claim is always `"false"` and is not used. Forgejo jobs must set `enable-openid-connect: true`.
-  - Two matching bindings are refused as ambiguous.
-Settings: `Cli:*Lifetime`, `Federation:Audience` (distinct per environment, e.g. `whiterabbit:test`), `Federation:MaxTokenLifetime`, and `Federation:Issuers` (each `Name`, `Kind` = `GitHub` or `Forgejo`, and the exact `Url`). An empty audience or issuer list disables CI federation.
-
-### Audit
-
-Security events (`SecurityEvents` table and the structured log) record CLI sign-ins, token exchanges, credential issuance, bunny.net key changes, revocations, binding changes and every proxy decision. Each event records:
-- principal type, subject and issuer;
-- binding and session;
-- repository, workflow, ref and run;
-- credential ID;
-- operation, method and path (never the query string);
-- status, upstream status and correlation ID.
-
-Tokens, keys, codes and request bodies are never recorded. Send `X-Correlation-ID` to correlate a request; it is echoed in the response.
-
-Read your own events with `rabbit admin audit` (`--since 7d`, `--binding ID`, `--limit N`, `--json`). It shows everything recorded with you as the owner, including your CI workloads' exchanges and proxy calls. Denials where no owner is known yet, such as a token from an untrusted issuer or for a repository without a binding, are only in the table and the log.
-
-### Health
-
-- `GET /health`: the process is running.
-- `GET /ready`: the database answers and every migration shipped with this build has been applied. Returns 503 otherwise, without connection details.
-
-### Database
-
-The same libSQL provider serves a local file, an in-memory database in tests and Bunny Database in production. The schema lives in numbered migrations (`src/Nordray.WhiteRabbit.Infrastructure/Database/Schema/NNN_name.sql`), applied once each at start-up and recorded in `SchemaMigrations`. Never edit an applied migration; add a new numbered file. The native libSQL library ships for linux-x64, linux-arm64, macOS arm64 and Windows x64; Intel Macs are not supported for local development.
-
-## Deployment
-
-White Rabbit runs as a single container (`white-rabbit` on port `8080`) on [bunny.net Magic Containers](https://bunny.net/magic-containers/). All its data, including the encrypted Data Protection key ring, lives in its database (Bunny Database when deployed), so the container needs no volume.
-
-**Image.** `.github/workflows/image.yml` publishes the server image to `ghcr.io/activout/nordray-whiterabbit`:
-- every push to `main` gets `:sha-<commit>` and `:main`;
-- every `v*` tag gets `:<tag>` and `:latest`.
-
-The run summary shows the digest. Deploy a pinned digest, not a moving tag. The image is generic: it holds no configuration, hostnames or secrets. Supply those as environment variables (see Configuration), for example from a secrets loader that you add as the entrypoint in your own image layer.
-
-### Deploy on bunny.net, step by step
-
-A one-time job, done by the owner on their own machine with [BunnyCLI](https://www.npmjs.com/package/@bunny.net/cli)
-and the bunny.net API key (the only time White Rabbit's setup needs it outside the server). Region SE is a fine
-default; pick one region and keep the app and database together.
-
-1. **Database:** `bunny db create` (one primary region), then a full-access token with
-   `bunny db tokens create <id> --no-save`. The connection string is
-   `Data Source=https://<database>.lite.bunnydb.net;Auth Token=<token>` (`https://`, not `libsql://`).
-   `bunny db create --output json` may return `id: null`; take the ID from `bunny db list`.
-2. **Secrets:** `openssl rand -base64 32` for `WhiteRabbit_DataProtection__EncryptionKey`. Store it with the database
-   backup: **losing it makes every stored bunny.net key unreadable.** Add the connection string, Mailjet keys and
-   sender, and `WhiteRabbit_Access__AllowedEmails__0` (who may sign in). Keep them out of shell history and
-   command lines: write them through files in `mktemp -d` or a secrets loader.
-3. **App:** a Magic Containers app (`POST /mc/apps`) with exactly one instance (`autoScaling {min: 1, max: 1}`),
-   one region, one container from a pinned digest of `ghcr.io/activout/nordray-whiterabbit` and an endpoint on
-   port 8080 through the CDN. Its environment holds the secrets above and these settings:
-   ```
-   ASPNETCORE_FORWARDEDHEADERS_ENABLED=true        # Bunny's CDN is the only way in
-   WhiteRabbit_Federation__Audience=whiterabbit:prod
-   WhiteRabbit_Federation__Issuers__0__Name=github
-   WhiteRabbit_Federation__Issuers__0__Kind=GitHub
-   WhiteRabbit_Federation__Issuers__0__Url=https://token.actions.githubusercontent.com
-   # Forgejo, e.g. Codebahn: Kind=Forgejo, Url=https://<forgejo host>/api/actions
-   ```
-   `bunny api` takes a body only on the command line, so post a body that carries secrets with curl and a header file
-   instead.
-4. **Hostname:** add your hostname to the endpoint's pull zone, point DNS at the pull zone, load a free certificate
-   and force HTTPS. The hostname is the server URL for `rabbit env add` and `RABBIT_SERVER`.
-5. **Check:** `curl https://<hostname>/ready` returns 200. Then `rabbit env add prod https://<hostname>`,
-   `rabbit auth login` and `rabbit admin key set`. Then delete the copies of the key in CI secrets as each workflow moves.
-
-### Moving a workflow to White Rabbit
-
-1. Find what the job does with Bunny: BunnyCLI, curl with `AccessKey`, or an action that takes the key. Map each call
-   to its capability (table above). An operation that is not supported stays where it is or waits for the registry.
-2. `rabbit admin bindings add` for that repository and workflow with only those capabilities. It prints the lines the
-   workflow needs: the OIDC permission (GitHub `id-token: write`, Forgejo `enable-openid-connect: true`),
-   `RABBIT_SERVER`, and installing BunnyCLI and a pinned rabbit.
-3. Replace `bunny …` with `rabbit -- …` and curl calls with `rabbit -- api METHOD /path`. Run the workflow from the
-   bound ref, check `rabbit admin audit --since 1h`, then delete the `BUNNYNET_API_KEY` secret from the repository.
-
-**A deploy that only changes the image** needs `mc.read` + `mc.deploy`, not `mc.manage`. Find the app, the registry
-and the container, then patch only the image fields:
-
-```sh
-APP_ID=$(rabbit -- api GET /mc/apps --output json | jq -r --arg n "$APP_NAME" '.items[] | select(.name == $n) | .id')
-REGISTRY_ID=$(rabbit -- api GET /mc/registries --output json | jq -r '.items[] | select(.hostName == "codebahn.net" and .isPublic == false) | .id')
-CONTAINER_ID=$(rabbit -- api GET "/mc/apps/$APP_ID" --output json | jq -r '.containerTemplates[] | select(.name == "web") | .id')
-rabbit -- api PATCH "/mc/apps/$APP_ID/containers/$CONTAINER_ID" --output json \
-  --body "$(jq -n --arg tag "$TAG" --arg r "$REGISTRY_ID" '{imageTag: $tag, imageRegistryId: $r, imageNamespace: "acme", imageName: "app"}')"
-```
-
-**Preview sites for pull requests.** Every pull request can get its own temporary copy of a Bunny Site, at its own
-URL, before anything is merged, like Firebase Hosting's preview channels or Netlify's deploy previews. The PR's job
-creates `example-site-pr-<N>` on its first run, deploys every push to it and posts the URL on the PR; closing the PR
-deletes the site. Reviewers look at the real result, not a screenshot, and production is never touched.
+Every pull request can get its own temporary copy of a Bunny Site, at its own URL, before anything is merged, like
+Firebase Hosting's preview channels or Netlify's deploy previews. The PR's job creates `example-site-pr-<N>` on its
+first run, deploys every push to it and posts the URL on the PR; closing the PR deletes the site. Reviewers look at the
+real result, not a screenshot, and production is never touched.
 
 Until now that meant giving every PR job the account key. With White Rabbit it takes a **pull request binding**
-(`--site-prefix`): it accepts `pull_request` jobs, and each one reaches exactly one site, `<prefix><PR number>`, with the
+(`--site-prefix example-site-pr-`): each `pull_request` job reaches exactly one site, `<prefix><PR number>`, with the
 number taken from the job's own OIDC token. A PR job can change its own workflow, but it still reaches nothing except
-its own preview: no other PR's site, not production, nothing else on the account. Pull requests from forks get no OIDC
-token on GitHub or Forgejo, so they never get a preview.
+its own preview. Pull requests from forks get no OIDC token on GitHub or Forgejo, so they never get a preview.
+Bindings and workflow steps: [Moving a workflow](docs/migrating.md#bunny-sites-and-preview-sites).
 
-A site with previews has three bindings, one per workflow:
+## Why you can trust it
 
-```sh
-# Production: v* tags deploy the site itself.
-rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-production.yml \
-  --site example-site --capability sites.read --capability sites.deploy --description "example-site production"
-# Previews: each pull request creates and updates example-site-pr-<N>.
-rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-preview.yml \
-  --site-prefix example-site-pr- --capability sites.read --capability sites.deploy --capability sites.manage --description "example-site previews"
-# Cleanup: closing the pull request deletes its preview.
-rabbit admin bindings add --issuer codebahn --repository acme/example-site --workflow .github/workflows/deploy-cleanup.yml \
-  --site-prefix example-site-pr- --capability sites.read --capability sites.manage --description "example-site preview cleanup"
-```
+- **Your key never leaves the server.** It is stored encrypted, injected into requests to `api.bunny.net`, and never
+  returned or logged.
+- **Deny by default.** Unknown operations get 404, missing capabilities 403.
+- **Exact matching for CI.** A job gets in only if issuer, repository, workflow and event match a binding you created.
+  Pull request jobs get in only through a pull request binding, which reaches just their own preview site.
+- **Short-lived.** Credentials last 5 minutes, CI sessions 1 hour, your own sessions 8 hours.
+- **No passwords.** Sign-in is by emailed one-time code, rate limited.
+- **Audited.** Every sign-in, credential and proxied call is recorded: `rabbit admin audit`.
 
-`BunnyWay/actions/deploy-site` takes the key, so call BunnyCLI through rabbit instead. Its JSON has the deploy ID and URL.
-The preview job (`on: pull_request`, types `opened`, `synchronize`, `reopened`):
+## Run your own server
 
-```sh
-SITE="example-site-pr-$PR_NUMBER"
-rabbit -- sites show "$SITE" > /dev/null 2>&1 || rabbit -- sites create "$SITE" --region SE --no-link --output json
-URL=$(rabbit -- sites deploy dist --site "$SITE" --force --output json | jq -r .production)
-# then post or update "$URL" as a PR comment with the job's own token
-```
+White Rabbit is one container (`ghcr.io/activout/nordray-whiterabbit`), made for
+[bunny.net Magic Containers](https://bunny.net/magic-containers/?ref=ch5ir79hyc) (affiliate link) and Bunny Database. See
+[Deploying White Rabbit](docs/deploy.md).
 
-The cleanup job (`on: pull_request`, type `closed`):
+## Contributing
 
-```sh
-SITE="example-site-pr-$PR_NUMBER"
-if rabbit -- sites show "$SITE" > /dev/null 2>&1; then rabbit -- sites delete "$SITE" --force; fi
-```
-
-Production is the same `sites deploy` with `--site example-site`.
-
-Custom domains (`bunny sites domains`) and DNS stay manual: they need `pullzone.write` and `dns.write` on the whole account.
-
-Sites imported with `bunny sites create --from-zone` keep their old zone names, so the `sites.*` capabilities cannot
-reach them. Recreate such a site with `bunny sites create`, deploy it and move its domain, or keep its workflow on the key.
-
-A workflow that creates or replaces the whole app (`POST /mc/apps`, `PUT /mc/apps/{id}`) needs `mc.manage`, which
-also lets it delete any app. When it sends environment values from CI secrets, prefer creating the app and its
-environment once by hand and patching only the image.
-
-**A short-lived database token**, e.g. for a script that writes to a Bunny Database, needs `db.read` + `db.token`:
-
-```sh
-echo "BUNNY_DATABASE_URL=$BUNNY_DATABASE_URL" > .env   # or pass the db_… ID as an argument
-BUNNY_DATABASE_AUTH_TOKEN=$(rabbit -- db tokens create --expiry 1h --no-save --force --output json | jq -r .token)
-echo "::add-mask::$BUNNY_DATABASE_AUTH_TOKEN"
-export BUNNY_DATABASE_AUTH_TOKEN
-```
-
-- Always pass `--expiry`: without it the token is full access and never expires, so every run leaves one behind.
-- rabbit removes `BUNNY_*` variables before it starts BunnyCLI, and BunnyCLI finds the database from a `.env` file
-  (matched exactly against the URLs Bunny lists), not from the environment.
-- With `--output json` only the JSON (`token`, `expires_at`, `db_id`, `authorization`) goes to stdout.
-- `rabbit -- db migrations apply --force` without `--token` creates its own 30-minute token, with the same capabilities.
-
-## Project layout
-
-```
-src/
-  Nordray.WhiteRabbit.Web            ASP.NET Core host, CLI API, sign-in pages, proxy pipeline
-  Nordray.WhiteRabbit.Core           Domain types — BunnyOperation, capabilities, models
-  Nordray.WhiteRabbit.Infrastructure libSQL DAOs and migrations, Mailjet/SMTP email service
-  Nordray.WhiteRabbit.Proxy          BunnyHttpClientFactory, ISRG Root X1 certificate pinning
-  Nordray.WhiteRabbit.Bunny          BunnyOperationRegistry (the hard-coded allow-list)
-tests/
-  Nordray.WhiteRabbit.Tests.Unit
-  Nordray.WhiteRabbit.Tests.Integration
-cli/                                 rabbit, the Go command-line client
-examples/ci/                         GitHub Actions and Forgejo Actions workflows
-```
-
-## What v1 deliberately does not include
-
-- OpenFGA or attribute-based policies
-- Resource-level scoping, except Bunny Sites by site name (no per pull zone or per DNS zone grants)
-- Refresh tokens: sign in again when the session ends
-- Third-party OIDC clients: White Rabbit is for CI/CD and the `rabbit` CLI only
-- Automatic endpoint discovery from bunny's OpenAPI specs
-- Multi-tenant isolation
-- Passwords or social login
+Architecture, API, security details and local development: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+MIT. Made by [Nordray](https://nordray.eu) and [Activout](https://activout.se).
