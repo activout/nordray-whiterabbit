@@ -98,7 +98,7 @@ public class AppsTests : CliFederationTests
         var (key, principal) = await KeyAsync(PullRequestBinding(), PullRequestToken());
         Assert.Equal(["example-app-pr-7"], principal.GetProperty("apps").EnumerateArray().Select(a => a.GetString()));
 
-        var list = await (await SendAsync(HttpMethod.Get, Mc, key)).Content.ReadAsStringAsync();
+        var list = await (await SendAsync(HttpMethod.Get, Mc, key)).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("example-app-pr-7", list);
         Assert.DoesNotContain("example-app-master", list);
         Assert.DoesNotContain("other-app", list);
@@ -165,7 +165,7 @@ public class AppsTests : CliFederationTests
         // No app scope: the API leaves the field out.
         Assert.False(principal.TryGetProperty("apps", out var apps) && apps.ValueKind != JsonValueKind.Null);
 
-        var list = await (await SendAsync(HttpMethod.Get, Mc, key)).Content.ReadAsStringAsync();
+        var list = await (await SendAsync(HttpMethod.Get, Mc, key)).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("other-app", list);
         Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Get, $"{Mc}/app-other", key)).StatusCode);
         // mc.manage stands in for pullzone.write only on a pull zone Bunny linked to an existing app.
