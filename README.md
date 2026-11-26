@@ -11,6 +11,8 @@ allowed that workflow, for example `mc.read` + `mc.deploy` and nothing else.
 
 The same works at your terminal, so an AI agent can run BunnyCLI without ever seeing the key.
 
+No bunny.net account yet? Sign up at [bunny.net](https://bunny.net?ref=ch5ir79hyc) (affiliate link: Activout gets a commission, you pay the same price).
+
 ## Get started
 
 **1. Install `rabbit`** and [BunnyCLI](https://www.npmjs.com/package/@bunny.net/cli), which rabbit runs for you:
