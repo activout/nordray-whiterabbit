@@ -128,7 +128,7 @@ without a binding, are only in the table and the log.
 
 | Concern | Choice |
 |---|---|
-| Web host | ASP.NET Core 10 |
+| Web host | ASP.NET Core 11 |
 | Token validation | `Microsoft.IdentityModel` (GitHub and Forgejo Actions OIDC tokens) |
 | Proxy forwarding | YARP (reverse proxy pipeline) |
 | Database | libSQL (a local file, or [Bunny Database](https://bunny.net/database/) when deployed) via [Activout.DatabaseClient](https://github.com/twogood/Activout.DatabaseClient) and its `LibSqlGateway` |
