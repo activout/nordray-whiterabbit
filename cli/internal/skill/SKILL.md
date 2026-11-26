@@ -109,7 +109,7 @@ Complete workflows: `examples/ci/github-actions.yml` and `examples/ci/forgejo-ac
 4. Open the change as a PR. It runs only from the bound ref, so the user merges and runs it, then checks
    `rabbit admin audit --since 1h`. Only after a green run does the user delete the repository's Bunny key secret.
 
-Things that trip up a move (the README's "Moving a workflow to White Rabbit" has the full recipes):
+Things that trip up a move (`docs/migrating.md` in the repository has the full recipes):
 - **Deploys.** A "create or update the app" step (`POST /mc/apps`, `PUT /mc/apps/{id}` with the whole app, often with
   environment values from CI secrets) needs `mc.manage`. Usually better: `mc.read` + `mc.deploy`, and patch only the
   image (`PATCH /mc/apps/{id}/containers/{cid}` with `imageTag`, `imageRegistryId`, `imageNamespace`, `imageName`);
@@ -168,7 +168,7 @@ Good bindings:
 
 ## Deploying a White Rabbit server on bunny.net
 
-Follow "Deploy on bunny.net, step by step" in the repository README (github.com/activout/nordray-whiterabbit). In
+Follow "Deploy on bunny.net, step by step" in `docs/deploy.md` (github.com/activout/nordray-whiterabbit). In
 short: a Bunny Database and its token, an encryption key, a Magic Containers app with one instance running a pinned
 digest of `ghcr.io/activout/nordray-whiterabbit` on port 8080, the `Federation__*` settings for the CI issuers, a
 hostname with HTTPS, then `/ready` returns 200.
