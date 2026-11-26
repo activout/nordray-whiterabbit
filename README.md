@@ -100,7 +100,7 @@ Only these operations are allowed; everything else is refused.
 ## Run your own server
 
 White Rabbit is one container (`ghcr.io/activout/nordray-whiterabbit`), made for
-[bunny.net Magic Containers](https://bunny.net/magic-containers/) and Bunny Database. See
+[bunny.net Magic Containers](https://bunny.net/magic-containers/?ref=ch5ir79hyc) (affiliate link) and Bunny Database. See
 [Deploying White Rabbit](docs/deploy.md).
 
 ## Contributing
