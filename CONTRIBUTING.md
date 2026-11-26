@@ -131,7 +131,7 @@ without a binding, are only in the table and the log.
 | Web host | ASP.NET Core 11 |
 | Token validation | `Microsoft.IdentityModel` (GitHub and Forgejo Actions OIDC tokens) |
 | Proxy forwarding | YARP (reverse proxy pipeline) |
-| Database | libSQL (a local file, or [Bunny Database](https://bunny.net/database/) when deployed) via [Activout.DatabaseClient](https://github.com/twogood/Activout.DatabaseClient) and its `LibSqlGateway` |
+| Database | libSQL (a local file, or [Bunny Database](https://bunny.net/database/?ref=ch5ir79hyc) when deployed; affiliate link) via [Activout.DatabaseClient](https://github.com/twogood/Activout.DatabaseClient) and its `LibSqlGateway` |
 | Email | Mailjet (SMTP/Mailpit fallback for local dev) |
 | Tests | xUnit, RichardSzalay.MockHttp |
 | CLI | Go ([`cli/`](cli/README.md)) |

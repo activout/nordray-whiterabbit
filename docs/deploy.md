@@ -1,7 +1,7 @@
 # Deploying White Rabbit
 
 White Rabbit runs as a single container (`white-rabbit` on port `8080`) on
-[bunny.net Magic Containers](https://bunny.net/magic-containers/). All its data, including the encrypted Data
+[bunny.net Magic Containers](https://bunny.net/magic-containers/?ref=ch5ir79hyc) (affiliate link). All its data, including the encrypted Data
 Protection key ring, lives in its database (Bunny Database when deployed), so the container needs no volume.
 
 ## Image
