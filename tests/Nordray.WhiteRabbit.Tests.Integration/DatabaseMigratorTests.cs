@@ -13,11 +13,11 @@ public class DatabaseMigratorTests
         await using var connection = db.Factory.Create();
         var migrator = new DatabaseMigrator(connection, NullLogger<DatabaseMigrator>.Instance);
 
-        Assert.Equal(DatabaseMigrator.Embedded.Select(m => m.Version), await migrator.PendingVersionsAsync());
+        Assert.Equal(DatabaseMigrator.Embedded.Select(m => m.Version), await migrator.PendingVersionsAsync(TestContext.Current.CancellationToken));
 
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(TestContext.Current.CancellationToken);
 
-        Assert.Empty(await migrator.PendingVersionsAsync());
+        Assert.Empty(await migrator.PendingVersionsAsync(TestContext.Current.CancellationToken));
         Assert.Equal(DatabaseMigrator.Embedded.Count, await ScalarAsync(connection, "SELECT COUNT(*) FROM SchemaMigrations"));
         foreach (var table in new[] { "Users", "LoginCodes", "DataProtectionKeys", "WorkloadBindings", "CliLoginCodes", "CliSessions", "VirtualCredentials", "SecurityEvents" })
             Assert.Equal(1, await ScalarAsync(connection, $"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'"));
@@ -33,7 +33,7 @@ public class DatabaseMigratorTests
         await using var connection = db.Factory.Create();
         var migrator = new DatabaseMigrator(connection, NullLogger<DatabaseMigrator>.Instance);
 
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(DatabaseMigrator.Embedded.Count, await ScalarAsync(connection, "SELECT COUNT(*) FROM SchemaMigrations"));
     }
@@ -46,13 +46,13 @@ public class DatabaseMigratorTests
         var migrator = new DatabaseMigrator(connection, NullLogger<DatabaseMigrator>.Instance) { RetryDelay = TimeSpan.Zero };
         var broken = new DatabaseMigrator.Migration(1, "001_broken", "CREATE TABLE Half (Id INTEGER); INSERT INTO NoSuchTable VALUES (1);");
 
-        await Assert.ThrowsAnyAsync<Exception>(() => migrator.MigrateAsync([broken]));
+        await Assert.ThrowsAnyAsync<Exception>(() => migrator.MigrateAsync([broken], TestContext.Current.CancellationToken));
 
         Assert.Equal(0, await ScalarAsync(connection, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'Half'"));
         Assert.Equal(0, await ScalarAsync(connection, "SELECT COUNT(*) FROM SchemaMigrations"));
 
         // Fixed and retried, it applies cleanly: nothing was left half-done.
-        await migrator.MigrateAsync([broken with { Sql = "CREATE TABLE Half (Id INTEGER);" }]);
+        await migrator.MigrateAsync([broken with { Sql = "CREATE TABLE Half (Id INTEGER);" }], TestContext.Current.CancellationToken);
         Assert.Equal(1, await ScalarAsync(connection, "SELECT COUNT(*) FROM SchemaMigrations"));
     }
 
@@ -70,8 +70,8 @@ public class DatabaseMigratorTests
         Assert.Equal([true, true], results);
         await using var check = db.Factory.Create();
         var migrator = new DatabaseMigrator(check, NullLogger<DatabaseMigrator>.Instance);
-        await migrator.MigrateAsync();
-        Assert.Empty(await migrator.PendingVersionsAsync());
+        await migrator.MigrateAsync(TestContext.Current.CancellationToken);
+        Assert.Empty(await migrator.PendingVersionsAsync(TestContext.Current.CancellationToken));
         Assert.Equal(DatabaseMigrator.Embedded.Count, await ScalarAsync(check, "SELECT COUNT(*) FROM SchemaMigrations"));
 
         static async Task<bool> TryMigrate(DbConnection connection)

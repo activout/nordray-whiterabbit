@@ -13,13 +13,13 @@ public partial class WebApplicationTests : IAsyncLifetime
     private WhiteRabbitFactory _factory = null!;
     private readonly string _encryptionKey = KeyRingEncryptionTests.NewKey();
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _db = await TestDatabase.CreateAsync(migrate: false);
         _factory = new WhiteRabbitFactory(_db.ConnectionString, _encryptionKey);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _factory.DisposeAsync();
         await _db.DisposeAsync();
@@ -30,14 +30,14 @@ public partial class WebApplicationTests : IAsyncLifetime
     [Fact]
     public async Task Health_ReturnsOk()
     {
-        var response = await _factory.CreateHttpsClient().GetAsync("/health");
+        var response = await _factory.CreateHttpsClient().GetAsync("/health", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
     public async Task Ready_AfterStartup_ReturnsOk()
     {
-        var response = await _factory.CreateHttpsClient().GetAsync("/ready");
+        var response = await _factory.CreateHttpsClient().GetAsync("/ready", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -45,19 +45,19 @@ public partial class WebApplicationTests : IAsyncLifetime
     public async Task Ready_WithPendingMigration_Returns503WithoutDetails()
     {
         var client = _factory.CreateHttpsClient();
-        await client.GetAsync("/health"); // starts the app, which applies the migrations
+        await client.GetAsync("/health", TestContext.Current.CancellationToken); // starts the app, which applies the migrations
 
         await using (var connection = _db.Factory.Create())
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             await using var command = connection.CreateCommand();
             command.CommandText = "DELETE FROM SchemaMigrations";
-            await command.ExecuteNonQueryAsync();
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
-        var response = await client.GetAsync("/ready");
+        var response = await client.GetAsync("/ready", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        Assert.Equal("""{"status":"not_ready","reason":"migrations_pending"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal("""{"status":"not_ready","reason":"migrations_pending"}""", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     // --- Sign-in allow-list ---
@@ -71,14 +71,14 @@ public partial class WebApplicationTests : IAsyncLifetime
     public async Task Login_SendsCodeOnlyToAllowedAddresses_AndAnswersTheSameEitherWay(string email, bool sent)
     {
         var client = _factory.CreateHttpsClient();
-        var form = await client.GetStringAsync("/login");
+        var form = await client.GetStringAsync("/login", TestContext.Current.CancellationToken);
         var token = AntiforgeryToken().Match(form).Groups[1].Value;
 
         var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["Email"] = email,
             ["__RequestVerificationToken"] = token,
-        }));
+        }), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.StartsWith("/LoginVerify", response.Headers.Location!.OriginalString, StringComparison.OrdinalIgnoreCase);
@@ -92,12 +92,12 @@ public partial class WebApplicationTests : IAsyncLifetime
         var statuses = new List<string>();
         for (var i = 0; i < 8; i++)
         {
-            var form = await client.GetStringAsync("/login");
+            var form = await client.GetStringAsync("/login", TestContext.Current.CancellationToken);
             var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["Email"] = WhiteRabbitFactory.AllowedEmail,
                 ["__RequestVerificationToken"] = AntiforgeryToken().Match(form).Groups[1].Value,
-            }));
+            }), TestContext.Current.CancellationToken);
             statuses.Add($"{(int)response.StatusCode} {response.Headers.Location?.OriginalString.Split('?')[0]}");
         }
 
@@ -163,15 +163,15 @@ public partial class WebApplicationTests : IAsyncLifetime
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/proxy/api.bunny.net/statistics");
         if (authorization is not null) request.Headers.TryAddWithoutValidation("Authorization", authorization);
-        var response = await _factory.CreateHttpsClient().SendAsync(request);
+        var response = await _factory.CreateHttpsClient().SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Contains("\"error\":\"unauthenticated\"", await response.Content.ReadAsStringAsync());
+        Assert.Contains("\"error\":\"unauthenticated\"", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public async Task Proxy_UnsupportedOperation_IsNotFound()
     {
-        var response = await _factory.CreateHttpsClient().GetAsync("/proxy/api.bunny.net/no/such/endpoint");
+        var response = await _factory.CreateHttpsClient().GetAsync("/proxy/api.bunny.net/no/such/endpoint", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
@@ -186,10 +186,10 @@ public partial class WebApplicationTests : IAsyncLifetime
 
         await using (var connection = _db.Factory.Create())
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT Xml FROM DataProtectionKeys";
-            var xml = (string)(await command.ExecuteScalarAsync())!;
+            var xml = (string)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
             Assert.Contains("<encryptedSecret decryptorType=\"Nordray.WhiteRabbit.Web.DataProtection.KeyRingDecryptor,", xml);
             Assert.DoesNotContain("<masterKey", xml);
         }
@@ -210,11 +210,11 @@ public partial class WebApplicationTests : IAsyncLifetime
     [Fact]
     public async Task Startup_RefusesStoredBunnyKeysWithoutAKeyRing()
     {
-        await _factory.CreateHttpsClient().GetAsync("/health");
+        await _factory.CreateHttpsClient().GetAsync("/health", TestContext.Current.CancellationToken);
         await _factory.DisposeAsync();
         await using (var connection = _db.Factory.Create())
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             foreach (var sql in new[]
             {
                 "INSERT INTO Users (Subject, Email, CreatedUtc, LastLoginUtc, BunnyApiKey) VALUES ('s', 'a@example.com', '2026-01-01 00:00:00.000', '2026-01-01 00:00:00.000', 'protected')",
@@ -223,7 +223,7 @@ public partial class WebApplicationTests : IAsyncLifetime
             {
                 await using var command = connection.CreateCommand();
                 command.CommandText = sql;
-                await command.ExecuteNonQueryAsync();
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
             }
         }
 
@@ -244,31 +244,31 @@ public partial class WebApplicationTests : IAsyncLifetime
         var client = _factory.CreateHttpsClient();
         var start = $"/cli/login?port=53682&state={State}&code_challenge={Challenge}";
 
-        var response = await client.GetAsync(start);
+        var response = await client.GetAsync(start, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.StartsWith("/login", PathOf(response), StringComparison.OrdinalIgnoreCase);
         var returnUrl = System.Web.HttpUtility.ParseQueryString(response.Headers.Location!.Query)["ReturnUrl"];
         Assert.Equal(start, returnUrl);
 
         // The ordinary email-code sign-in, with the return URL carried through.
-        var form = await client.GetStringAsync("/login");
-        await client.PostAsync("/login", Form(form, ("Email", WhiteRabbitFactory.AllowedEmail), ("ReturnUrl", returnUrl!)));
-        form = await client.GetStringAsync($"/LoginVerify?email={WhiteRabbitFactory.AllowedEmail}");
+        var form = await client.GetStringAsync("/login", TestContext.Current.CancellationToken);
+        await client.PostAsync("/login", Form(form, ("Email", WhiteRabbitFactory.AllowedEmail), ("ReturnUrl", returnUrl!)), TestContext.Current.CancellationToken);
+        form = await client.GetStringAsync($"/LoginVerify?email={WhiteRabbitFactory.AllowedEmail}", TestContext.Current.CancellationToken);
         response = await client.PostAsync("/LoginVerify", Form(form,
-            ("Email", WhiteRabbitFactory.AllowedEmail), ("Code", _factory.Emails.LastCode(WhiteRabbitFactory.AllowedEmail)), ("ReturnUrl", returnUrl!)));
+            ("Email", WhiteRabbitFactory.AllowedEmail), ("Code", _factory.Emails.LastCode(WhiteRabbitFactory.AllowedEmail)), ("ReturnUrl", returnUrl!)), TestContext.Current.CancellationToken);
         Assert.Equal(start, response.Headers.Location!.OriginalString);
 
         // An explicit confirmation (POST with antiforgery) before any code is issued.
-        form = await client.GetStringAsync(start);
+        form = await client.GetStringAsync(start, TestContext.Current.CancellationToken);
         Assert.Contains(WhiteRabbitFactory.AllowedEmail, form);
-        response = await client.PostAsync(start, Form(form, ("Port", "53682"), ("State", State), ("CodeChallenge", Challenge)));
+        response = await client.PostAsync(start, Form(form, ("Port", "53682"), ("State", State), ("CodeChallenge", Challenge)), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         var callback = response.Headers.Location!;
         Assert.Equal("http://127.0.0.1:53682/callback", callback.GetLeftPart(UriPartial.Path));
         var query = System.Web.HttpUtility.ParseQueryString(callback.Query);
         Assert.Equal(State, query["state"]);
 
-        var exchange = await client.PostAsync("/api/cli/exchange", JsonContent.Create(new { code = query["code"], code_verifier = Verifier }));
+        var exchange = await client.PostAsync("/api/cli/exchange", JsonContent.Create(new { code = query["code"], code_verifier = Verifier }), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, exchange.StatusCode);
     }
 
@@ -280,15 +280,15 @@ public partial class WebApplicationTests : IAsyncLifetime
     public async Task CliLogin_InvalidParameters_IssueNoCode(string query)
     {
         var client = await SignedInClientAsync();
-        var page = await client.GetStringAsync("/cli/login?" + query);
+        var page = await client.GetStringAsync("/cli/login?" + query, TestContext.Current.CancellationToken);
         Assert.Contains("not valid", page);
         Assert.DoesNotContain("<form", page);
 
         // Posting anyway does not redirect anywhere.
-        var form = await client.GetStringAsync($"/cli/login?port=53682&state={State}&code_challenge={Challenge}");
+        var form = await client.GetStringAsync($"/cli/login?port=53682&state={State}&code_challenge={Challenge}", TestContext.Current.CancellationToken);
         var parsed = System.Web.HttpUtility.ParseQueryString(query);
         var response = await client.PostAsync("/cli/login", Form(form,
-            ("Port", parsed["port"] ?? ""), ("State", parsed["state"] ?? ""), ("CodeChallenge", parsed["code_challenge"] ?? "")));
+            ("Port", parsed["port"] ?? ""), ("State", parsed["state"] ?? ""), ("CodeChallenge", parsed["code_challenge"] ?? "")), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -299,7 +299,7 @@ public partial class WebApplicationTests : IAsyncLifetime
         var response = await client.PostAsync("/cli/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["Port"] = "53682", ["State"] = State, ["CodeChallenge"] = Challenge,
-        }));
+        }), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -308,7 +308,7 @@ public partial class WebApplicationTests : IAsyncLifetime
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"/cli/login?port=53682&state={State}&code_challenge={Challenge}");
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer wrs_" + new string('A', 43));
-        var response = await _factory.CreateHttpsClient().SendAsync(request);
+        var response = await _factory.CreateHttpsClient().SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.StartsWith("/login", PathOf(response), StringComparison.OrdinalIgnoreCase);
     }

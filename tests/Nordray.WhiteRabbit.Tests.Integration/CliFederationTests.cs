@@ -34,7 +34,7 @@ public abstract class CliFederationTests : IAsyncLifetime
     protected Func<HttpRequestMessage, HttpResponseMessage> _upstream =
         _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"ok":true}""") };
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _db = await TestDatabase.CreateAsync(migrate: false);
         _factory = new WhiteRabbitFactory(_db.ConnectionString, KeyRingEncryptionTests.NewKey());
@@ -52,7 +52,7 @@ public abstract class CliFederationTests : IAsyncLifetime
         await _client.GetAsync("/health"); // starts the app and applies migrations
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _factory.DisposeAsync();
         await _db.DisposeAsync();
@@ -250,7 +250,7 @@ public class CliFederationDiscoveryTests : CliFederationTests
     [Fact]
     public async Task Config_TellsTheCliItsAudienceAndCapabilities()
     {
-        var config = await _client.GetFromJsonAsync<JsonElement>("/api/cli/config");
+        var config = await _client.GetFromJsonAsync<JsonElement>("/api/cli/config", TestContext.Current.CancellationToken);
         Assert.False(config.TryGetProperty("dex_client_id", out _));
         Assert.Equal(WhiteRabbitFactory.FederationAudience, config.GetProperty("federation_audience").GetString());
         Assert.Contains(config.GetProperty("capabilities").EnumerateArray(), c => c.GetProperty("name").GetString() == "statistics.read");
@@ -259,7 +259,7 @@ public class CliFederationDiscoveryTests : CliFederationTests
     [Fact]
     public async Task Config_DescribesEachCapabilityAsAWhole()
     {
-        var config = await _client.GetFromJsonAsync<JsonElement>("/api/cli/config");
+        var config = await _client.GetFromJsonAsync<JsonElement>("/api/cli/config", TestContext.Current.CancellationToken);
         var mcRead = config.GetProperty("capabilities").EnumerateArray().Single(c => c.GetProperty("name").GetString() == "mc.read");
         var description = mcRead.GetProperty("description").GetString()!;
         Assert.Contains("registries", description);
@@ -330,7 +330,7 @@ public class CliFederationHumanExchangeTests : CliFederationTests
     [Fact]
     public async Task Exchange_CodeAndSubjectTokenTogether_IsRejected()
     {
-        var response = await _client.PostAsJsonAsync("/api/cli/exchange", new { code = await LoginCodeAsync(Email), code_verifier = Verifier, subject_token = GitHubToken() });
+        var response = await _client.PostAsJsonAsync("/api/cli/exchange", new { code = await LoginCodeAsync(Email), code_verifier = Verifier, subject_token = GitHubToken() }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -578,13 +578,13 @@ public class CliFederationBindingAdministrationTests : CliFederationTests
 
         var withKey = new HttpRequestMessage(HttpMethod.Get, "/api/admin/bindings");
         withKey.Headers.Add("AccessKey", key);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(withKey)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(withKey, TestContext.Current.CancellationToken)).StatusCode);
 
         var withIdToken = new HttpRequestMessage(HttpMethod.Get, "/api/cli/whoami");
         withIdToken.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GitHubToken());
-        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(withIdToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(withIdToken, TestContext.Current.CancellationToken)).StatusCode);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.GetAsync("/api/cli/whoami")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.GetAsync("/api/cli/whoami", TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]
@@ -628,7 +628,7 @@ public class CliFederationCredentialsAndProxyTests : CliFederationTests
         var workload = (await ExchangeAsync(GitHubToken())).Body.GetProperty("access_token").GetString()!;
         var response = await SendAsync(HttpMethod.Post, "/api/cli/credentials", workload, new { capabilities = new[] { "statistics.read", "dns.write" } });
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Contains("dns.write", await response.Content.ReadAsStringAsync());
+        Assert.Contains("dns.write", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -639,7 +639,7 @@ public class CliFederationCredentialsAndProxyTests : CliFederationTests
 
         var response = await ProxyAsync(key, "/proxy/api.bunny.net/statistics");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Contains("capability_not_granted", await response.Content.ReadAsStringAsync());
+        Assert.Contains("capability_not_granted", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Empty(_upstreamRequests);
     }
 
@@ -652,7 +652,7 @@ public class CliFederationCredentialsAndProxyTests : CliFederationTests
 
         var response = await ProxyAsync(key, "/proxy/api.bunny.net/statistics");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Contains("access_key_expired", await response.Content.ReadAsStringAsync());
+        Assert.Contains("access_key_expired", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -698,7 +698,7 @@ public class CliFederationCredentialsAndProxyTests : CliFederationTests
         var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new StringContent(body, System.Text.Encoding.UTF8, contentType) };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", human);
 
-        Assert.Equal(expected, (await _client.SendAsync(request)).StatusCode);
+        Assert.Equal(expected, (await _client.SendAsync(request, TestContext.Current.CancellationToken)).StatusCode);
 
         // Nothing was revoked and no credential was issued.
         Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Get, "/api/cli/whoami", human)).StatusCode);
@@ -731,7 +731,7 @@ public class CliFederationCredentialsAndProxyTests : CliFederationTests
     public async Task Revoke_OneCredential_LeavesTheSession()
     {
         var human = await HumanSessionAsync();
-        var credential = await (await SendAsync(HttpMethod.Post, "/api/cli/credentials", human)).Content.ReadFromJsonAsync<JsonElement>();
+        var credential = await (await SendAsync(HttpMethod.Post, "/api/cli/credentials", human)).Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
 
         var response = await SendAsync(HttpMethod.Post, "/api/cli/revoke", human, new { credential_id = credential.GetProperty("credential_id").GetString() });
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
@@ -752,7 +752,7 @@ public class CliFederationCredentialsAndProxyTests : CliFederationTests
 
         var response = await ProxyAsync(key, "/proxy/api.bunny.net/statistics");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Contains("user_not_allowed", await response.Content.ReadAsStringAsync());
+        Assert.Contains("user_not_allowed", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
 }
@@ -777,7 +777,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         var key = await CredentialAsync(await HumanSessionAsync(), "mc.read");
 
         var response = await ProxyAsync(key, "/proxy/api.bunny.net/mc/apps/app-1");
-        var body = await response.Content.ReadAsStringAsync();
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("https://api.bunny.net/mc/apps/app-1", Assert.Single(_upstreamRequests).RequestUri!.ToString());
@@ -797,7 +797,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         _upstream = _ => Json("""{"items":[{"id":7,"hostName":"codebahn.net","isPublic":false,"firstPasswordSymbols":"ab","lastPasswordSymbols":"yz"}]}""");
         var key = await CredentialAsync(await HumanSessionAsync(), "mc.read");
 
-        var body = await (await ProxyAsync(key, "/proxy/api.bunny.net/mc/registries")).Content.ReadAsStringAsync();
+        var body = await (await ProxyAsync(key, "/proxy/api.bunny.net/mc/registries")).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         var item = JsonDocument.Parse(body).RootElement.GetProperty("items")[0];
         Assert.Equal(7, item.GetProperty("id").GetInt32());
@@ -821,7 +821,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(patch, Assert.Single(_upstreamBodies));
-        Assert.DoesNotContain("secret-3", await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain("secret-3", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -833,7 +833,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         var response = await ProxyAsync(key, "/proxy/api.bunny.net/mc/apps/app-1");
 
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
-        Assert.DoesNotContain("vault-secret-1", await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain("vault-secret-1", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         // Bunny succeeded; the audit says so, and why White Rabbit refused the answer.
         var audit = (await SecurityEventsAsync()).Last(e => (string?)e["EventType"] == "proxy.request");
         Assert.Equal(502L, audit["HttpStatus"]);
@@ -855,7 +855,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         var response = await SendWithKeyAsync(HttpMethod.Patch, "/proxy/api.bunny.net/mc/apps/app-1/containers/c-api", key, patch);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)).RootElement;
         Assert.Equal("body_field_not_allowed", body.GetProperty("error").GetString());
         Assert.Contains(body.GetProperty("fields").EnumerateArray(), f => f.GetString() == refusedField);
         Assert.Empty(_upstreamRequests);
@@ -894,7 +894,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         // What `bunny apps env set NEW …` sends after reading the (redacted) container through White Rabbit.
         var response = await SendWithKeyAsync(HttpMethod.Put, EnvPath, key,
             """{"DB_TOKEN":"[redacted by White Rabbit]","MODE":"prod","NEW":"new-secret-2"}""");
-        var body = await response.Content.ReadAsStringAsync();
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, _upstreamRequests.Count);
@@ -932,7 +932,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         var response = await SendWithKeyAsync(HttpMethod.Put, EnvPath, key, """{"OTHER":"[redacted by White Rabbit]"}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("redacted_value_unknown", await response.Content.ReadAsStringAsync());
+        Assert.Contains("redacted_value_unknown", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Equal(HttpMethod.Get, Assert.Single(_upstreamRequests).Method);
         var audit = (await SecurityEventsAsync()).Last(e => (string?)e["EventType"] == "proxy.request");
         Assert.Equal("redacted_value_unknown", (string?)audit["Reason"]);
@@ -986,7 +986,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
               {"id":"c-web","name":"web","imageTag":"v2","environmentVariables":[{"name":"DB_TOKEN","value":"[redacted by White Rabbit]"},{"name":"NEW","value":"new-secret-3"}]},
               {"Name":"job","EnvironmentVariables":[{"Name":"DB_TOKEN","Value":"[redacted by White Rabbit]"}]}]}
             """);
-        var body = await response.Content.ReadAsStringAsync();
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("https://api.bunny.net/mc/apps/app-1", _upstreamRequests[0].RequestUri!.ToString());
@@ -1028,7 +1028,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         var response = await SendWithKeyAsync(HttpMethod.Put, AppPath, key, app);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("redacted_value_unknown", await response.Content.ReadAsStringAsync());
+        Assert.Contains("redacted_value_unknown", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.DoesNotContain(_upstreamRequests, r => r.Method == HttpMethod.Put);
     }
 
@@ -1054,7 +1054,7 @@ public class CliFederationMagicContainersAndDatabaseTests : CliFederationTests
         var response = await SendWithKeyAsync(HttpMethod.Post, "/proxy/api.bunny.net/mc/apps", key, """{"name":"preview-42"}""");
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("create-secret-4", body);
         Assert.Contains("app-9", body);
     }
@@ -1114,7 +1114,7 @@ public class CliFederationBunnyKeyTests : CliFederationTests
         var human = await HumanSessionAsync();
         var response = await SendAsync(HttpMethod.Put, "/api/admin/bunny-key", human, new { api_key = NewKey });
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-        Assert.Empty(await response.Content.ReadAsStringAsync());
+        Assert.Empty(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(HttpStatusCode.OK, (await ProxyAsync(await CredentialAsync(human, "statistics.read"), "/proxy/api.bunny.net/statistics")).StatusCode);
         Assert.Equal(NewKey, Assert.Single(_upstreamRequests).Headers.GetValues("AccessKey").Single());
@@ -1122,10 +1122,10 @@ public class CliFederationBunnyKeyTests : CliFederationTests
         Assert.Contains(await SecurityEventsAsync(), e => (string?)e["EventType"] == "admin.bunny_key.set" && (string?)e["Outcome"] == "allowed");
         await AssertNoSecretsInAuditAsync(NewKey);
         await using var connection = _db.Factory.Create();
-        await connection.OpenAsync();
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT BunnyApiKey FROM Users";
-        Assert.DoesNotContain(NewKey, (string)(await command.ExecuteScalarAsync())!);
+        Assert.DoesNotContain(NewKey, (string)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!);
     }
 
     [Fact]
@@ -1137,7 +1137,7 @@ public class CliFederationBunnyKeyTests : CliFederationTests
 
         var response = await ProxyAsync(await CredentialAsync(human, "statistics.read"), "/proxy/api.bunny.net/statistics");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Contains("bunny_api_key_not_configured", await response.Content.ReadAsStringAsync());
+        Assert.Contains("bunny_api_key_not_configured", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Empty(_upstreamRequests);
     }
 
@@ -1150,7 +1150,7 @@ public class CliFederationBunnyKeyTests : CliFederationTests
         var human = await HumanSessionAsync();
         var request = new HttpRequestMessage(HttpMethod.Put, "/api/admin/bunny-key") { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", human);
-        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(request)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(request, TestContext.Current.CancellationToken)).StatusCode);
     }
 
     [Fact]

@@ -33,6 +33,6 @@ public class SecurityRegressionTests
         var service = new MailjetEmailService(
             Options.Create(new MailjetOptions()), environment.Object, NullLogger<MailjetEmailService>.Instance);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendLoginCodeAsync("a@example.com", "123456"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendLoginCodeAsync("a@example.com", "123456", TestContext.Current.CancellationToken));
     }
 }

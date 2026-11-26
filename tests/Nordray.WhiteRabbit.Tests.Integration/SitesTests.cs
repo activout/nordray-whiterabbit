@@ -119,7 +119,7 @@ public class SitesTests : CliFederationTests
         Assert.Equal(1, principal.GetProperty("sites").GetArrayLength());
 
         // Lists show only the preview's zones, without their secrets.
-        var pullZones = await (await SendAsync(HttpMethod.Get, "/proxy/api.bunny.net/pullzone", key)).Content.ReadAsStringAsync();
+        var pullZones = await (await SendAsync(HttpMethod.Get, "/proxy/api.bunny.net/pullzone", key)).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains(PreviewZone, pullZones);
         Assert.DoesNotContain(ProdZone, pullZones);
         Assert.DoesNotContain(OtherZone, pullZones);
@@ -134,7 +134,7 @@ public class SitesTests : CliFederationTests
 
         var zone = await SendAsync(HttpMethod.Get, "/proxy/api.bunny.net/storagezone/101", key);
         Assert.Equal(HttpStatusCode.OK, zone.StatusCode);
-        var zoneJson = await zone.Content.ReadAsStringAsync();
+        var zoneJson = await zone.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("pw-preview-zone", zoneJson);
         Assert.Contains("[redacted by White Rabbit]", zoneJson);
     }
@@ -221,7 +221,7 @@ public class SitesTests : CliFederationTests
         _upstream = request => request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/storagezone/101"
             ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StorageZone(StorageZones[1]).ToJsonString()) }
             : inner(request);
-        var answer = await (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/storagezone/101", key, """{"Custom404FilePath":"/deploys/d1/404.html"}""")).Content.ReadAsStringAsync();
+        var answer = await (await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/storagezone/101", key, """{"Custom404FilePath":"/deploys/d1/404.html"}""")).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain("pw-preview-zone", answer);
     }
 
@@ -271,7 +271,7 @@ public class SitesTests : CliFederationTests
             """{"CacheControlMaxAgeOverride":2592000,"CacheControlPublicMaxAgeOverride":0}""")).StatusCode);
         var refused = await SendAsync(HttpMethod.Post, "/proxy/api.bunny.net/pullzone/11", key, """{"OriginUrl":"https://example.com"}""");
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
-        Assert.Contains("body_field_not_allowed", await refused.Content.ReadAsStringAsync());
+        Assert.Contains("body_field_not_allowed", await refused.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -320,7 +320,7 @@ public class SitesTests : CliFederationTests
     {
         FakeAccount();
         var key = await CredentialAsync(await HumanSessionAsync(), "sites.read");
-        var zones = await (await SendAsync(HttpMethod.Get, "/proxy/api.bunny.net/storagezone", key)).Content.ReadAsStringAsync();
+        var zones = await (await SendAsync(HttpMethod.Get, "/proxy/api.bunny.net/storagezone", key)).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains(ProdZone, zones);
         Assert.Contains(OtherZone, zones);
         Assert.DoesNotContain(PrivateZone, zones);
@@ -335,7 +335,7 @@ public class SitesTests : CliFederationTests
         var key = await CredentialAsync(await HumanSessionAsync(), "pullzone.read");
         foreach (var path in new[] { "/proxy/api.bunny.net/pullzone", "/proxy/api.bunny.net/pullzone/14" })
         {
-            var json = await (await SendAsync(HttpMethod.Get, path, key)).Content.ReadAsStringAsync();
+            var json = await (await SendAsync(HttpMethod.Get, path, key)).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
             Assert.DoesNotContain("token-auth-secret", json);
             Assert.DoesNotContain("PRIVATE-KEY-PEM", json);
             Assert.Contains("private-pullzone", json); // pullzone.read is not limited to sites
