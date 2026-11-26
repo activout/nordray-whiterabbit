@@ -71,6 +71,34 @@ Production is the same `sites deploy` with `--site example-site`.
   reach them. Recreate such a site with `bunny sites create`, deploy it and move its domain, or keep its workflow on
   the key.
 
+## Preview apps for pull requests
+
+The same as preview sites, for a Magic Containers app: each PR creates or replaces its own app `example-app-pr-<N>`
+with the PR's image, and closing the PR deletes it. The production deploy names its app.
+
+```sh
+rabbit admin bindings add --issuer codebahn --repository acme/example-app --workflow .github/workflows/deploy.yml \
+  --app example-app-master --capability mc.read --capability mc.manage --description "example-app production"
+rabbit admin bindings add --issuer codebahn --repository acme/example-app --workflow .github/workflows/deploy.yml \
+  --app-prefix example-app-pr- --capability mc.read --capability mc.manage --description "example-app previews"
+rabbit admin bindings add --issuer codebahn --repository acme/example-app --workflow .github/workflows/cleanup.yml \
+  --app-prefix example-app-pr- --capability mc.read --capability mc.manage --description "example-app preview cleanup"
+```
+
+One workflow may serve both production (`push` of a tag) and previews (`pull_request`): the two bindings never match
+the same job. Cleanup deletes the app's CDN pull zone **before** the app, because the pull zone can only be checked
+against its app while the app exists:
+
+```sh
+APP_ID=$(rabbit -- api GET /mc/apps --output json | jq -r --arg n "example-app-pr-$PR_NUMBER" '.items[] | select(.name == $n) | .id')
+PULL_ZONE_ID=$(rabbit -- api GET "/mc/apps/$APP_ID" --output json | jq -r '.containerTemplates[0].endpoints[0].pullZoneId // empty')
+[ -z "$PULL_ZONE_ID" ] || rabbit -- api DELETE "/pullzone/$PULL_ZONE_ID" --output json
+rabbit -- api DELETE "/mc/apps/$APP_ID" --output json
+```
+
+A preview app usually needs the same environment values as production (database credentials from CI secrets). They go
+in the app's body as before; White Rabbit only checks the app's name.
+
 ## A short-lived database token
 
 For example for a script that writes to a Bunny Database. Needs `db.read` + `db.token`:

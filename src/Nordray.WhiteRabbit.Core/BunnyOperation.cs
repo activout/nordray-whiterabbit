@@ -17,8 +17,19 @@ public sealed record BunnyOperation(
     string? RestoreRedactedAppEnvironmentFrom = null,
     string? SiteCapability = null,
     SiteResource SiteResource = SiteResource.None,
-    IReadOnlyList<string>? SiteAllowedBodyFields = null)
+    IReadOnlyList<string>? SiteAllowedBodyFields = null,
+    AppResource AppResource = AppResource.None,
+    string? AppCapability = null)
 {
+    /// <summary>Which Magic Containers app the request is about, for the app scope check.</summary>
+    public AppResource AppResource { get; init; } = AppResource;
+
+    /// <summary>
+    /// A capability that also grants the operation, but only for the Magic Containers app it belongs to (within the
+    /// caller's app scope). Used for an app's own CDN pull zone, which <c>mc.manage</c> may delete.
+    /// </summary>
+    public string? AppCapability { get; init; } = AppCapability;
+
     /// <summary>
     /// A second capability that also grants the operation, but only on the caller's own sites (<see cref="SiteResource"/>
     /// says how the zone is found). A caller with <see cref="RequiredCapability"/> is not limited to sites.
@@ -82,6 +93,20 @@ public enum SiteResource
     StorageZoneCreate,
     /// <summary>A file in a storage zone, by the <c>{zoneName}</c> route value. The zone password is injected.</summary>
     StorageFile,
+}
+
+/// <summary>How an app-aware operation identifies its Magic Containers app, so the app scope can be checked.</summary>
+public enum AppResource
+{
+    None,
+    /// <summary>GET /mc/apps: the response is filtered to the scope.</summary>
+    AppList,
+    /// <summary>An app by its <c>{appId}</c> route value (and, when the body names the app, that name too).</summary>
+    App,
+    /// <summary>POST /mc/apps: the body's <c>name</c>.</summary>
+    AppCreate,
+    /// <summary>A pull zone by <c>{id}</c> that Bunny linked to an app (<c>MagicContainersAppId</c>): its CDN zone.</summary>
+    AppPullZone,
 }
 
 public enum BunnyCredentialKind

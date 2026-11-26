@@ -86,7 +86,8 @@ Only these operations are allowed; everything else is refused.
 - **Secrets stay hidden.** Environment variable values, registry passwords, pull zone keys and storage zone passwords
   come back as `[redacted by White Rabbit]`. `mc.env` can still add, change and remove variables without reading them.
 - **`mc.deploy` changes only the image**, nothing else on the container.
-- **`mc.manage` and `db.manage` can delete anything** on the account, not just what they created.
+- **Magic Containers apps can be scoped by name.** A binding with `--app NAME` reaches only those apps; without
+  `--app`, `mc.manage` can delete any app on the account. `db.manage` can delete any database.
 - **`sites.*` reach only the sites a binding names** (`--site`), or one preview site per pull request
   (`--site-prefix`). Site files are uploaded without the CI job ever holding the storage zone password.
 - **Not supported:** Edge Storage files outside Bunny Sites, custom domains for sites, Stream, log forwarding and registry changes.
@@ -102,7 +103,9 @@ Until now that meant giving every PR job the account key. With White Rabbit it t
 (`--site-prefix example-site-pr-`): each `pull_request` job reaches exactly one site, `<prefix><PR number>`, with the
 number taken from the job's own OIDC token. A PR job can change its own workflow, but it still reaches nothing except
 its own preview. Pull requests from forks get no OIDC token on GitHub or Forgejo, so they never get a preview.
-Bindings and workflow steps: [Moving a workflow](docs/migrating.md#bunny-sites-and-preview-sites).
+The same works for a Magic Containers app (`--app-prefix example-app-pr-`): each PR gets its own app with the PR's
+image. Bindings and workflow steps: [preview sites](docs/migrating.md#bunny-sites-and-preview-sites),
+[preview apps](docs/migrating.md#preview-apps-for-pull-requests).
 
 ## Why you can trust it
 
@@ -110,7 +113,7 @@ Bindings and workflow steps: [Moving a workflow](docs/migrating.md#bunny-sites-a
   returned or logged.
 - **Deny by default.** Unknown operations get 404, missing capabilities 403.
 - **Exact matching for CI.** A job gets in only if issuer, repository, workflow and event match a binding you created.
-  Pull request jobs get in only through a pull request binding, which reaches just their own preview site.
+  Pull request jobs get in only through a pull request binding, which reaches just their own preview site or app.
 - **Short-lived.** Credentials last 5 minutes, CI sessions 1 hour, your own sessions 8 hours.
 - **No passwords.** Sign-in is by emailed one-time code, rate limited.
 - **Audited.** Every sign-in, credential and proxied call is recorded: `rabbit admin audit`.

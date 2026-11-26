@@ -33,6 +33,10 @@ injected and the request is forwarded to `https://api.bunny.net`.
   entry. Bunny's OpenAPI specs are for reference only: presence in the spec does not make an endpoint available.
 - **Each capability has one description**, in `BunnyOperationRegistry`, covering every operation it allows. `rabbit`
   and the README's capability table show that text.
+- **Magic Containers apps can be scoped by name.** A binding with `--app NAME` (repeatable) reaches only those apps
+  with its `mc.*` capabilities: the app list is filtered, other apps are "not found", and a create or replace must
+  name one of them. A binding without `--app` stays account-wide. `mc.manage` may also delete the CDN pull zone Bunny
+  made for one of those apps' endpoints (an app's pull zone outlives the app), while the app still exists.
 - **Left out on purpose:** log forwarding (its responses carry tokens), registry changes and single-registry reads,
   separate volume and endpoint changes (replacing the whole app with `mc.manage` covers them), and database groups and
   their tokens.
@@ -114,8 +118,9 @@ even when it is null or empty.
     protected `environment` on the binding. The workflow must still come from the ref being built.
   - The event must be on the binding's allow-list. `pull_request_target`, `workflow_run` and similar events are never
     allowed, and `pull_request` only on a pull request binding.
-  - **Pull request bindings** (`--site-prefix example-site-pr-`) accept exactly the `pull_request` event, have no ref
-    and hold only `sites.*` capabilities. The job reaches one site, `<prefix><PR number>`, with the number from the
+  - **Pull request bindings** (`--site-prefix example-site-pr-`, `--app-prefix example-app-pr-`, or both) accept
+    exactly the `pull_request` event, have no ref and hold only `sites.*` (with a site prefix) and `mc.*` (with an app
+    prefix). The job reaches one site and/or one app, `<prefix><PR number>`, with the number from the
     token's ref (`refs/pull/N/head` on Forgejo, `/merge` on GitHub). A PR from a fork gets no OIDC token on either
     forge. A PR from a branch may have changed its own workflow, which is why it can never reach anything but its own
     preview.
@@ -212,7 +217,8 @@ local development.
 ## What v1 deliberately does not include
 
 - OpenFGA or attribute-based policies
-- Resource-level scoping, except Bunny Sites by site name (no per pull zone or per DNS zone grants)
+- Resource-level scoping, except Bunny Sites by site name and Magic Containers apps by app name (no per pull zone or
+  per DNS zone grants)
 - Refresh tokens: sign in again when the session ends
 - Third-party OIDC clients: White Rabbit is for CI/CD and the `rabbit` CLI only
 - Automatic endpoint discovery from bunny's OpenAPI specs

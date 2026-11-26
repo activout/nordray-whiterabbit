@@ -25,11 +25,13 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
     public const string OwnerKeyItem = "bunny.owner-key";
     /// <summary>Set when the request must stay within the caller's sites: a <see cref="SiteAccess"/>.</summary>
     public const string SiteAccessItem = "bunny.site-access";
+    /// <summary>Set when the request must stay within the caller's Magic Containers apps: an <see cref="AppAccess"/>.</summary>
+    public const string AppAccessItem = "bunny.app-access";
     /// <summary>Data Protection purpose for the stored Bunny API keys. Changing it makes every stored key unreadable.</summary>
     public const string KeyPurpose = "BunnyApiKey.v1";
     private readonly IDataProtector _bunnyKeyProtector = dataProtection.CreateProtector(KeyPurpose);
 
-    private sealed record Caller(User Owner, IReadOnlySet<string> Capabilities, SiteScope? Sites, SecurityEvent Audit);
+    private sealed record Caller(User Owner, IReadOnlySet<string> Capabilities, SiteScope? Sites, AppScope? Apps, SecurityEvent Audit);
 
     public async Task InvokeAsync(HttpContext ctx, Func<Task> next, RouteModel route)
     {
@@ -56,15 +58,25 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
         {
             var capability = metadata["Capability"];
             var siteCapability = metadata.GetValueOrDefault("SiteCapability") ?? "";
-            var viaSite = !caller.Capabilities.Contains(capability) && siteCapability.Length > 0 && caller.Capabilities.Contains(siteCapability);
-            if (!caller.Capabilities.Contains(capability) && !viaSite)
+            var appCapability = metadata.GetValueOrDefault("AppCapability") ?? "";
+            var direct = caller.Capabilities.Contains(capability);
+            var viaSite = !direct && siteCapability.Length > 0 && caller.Capabilities.Contains(siteCapability);
+            var viaApp = !direct && !viaSite && appCapability.Length > 0 && caller.Capabilities.Contains(appCapability);
+            if (!direct && !viaSite && !viaApp)
             {
+                var alternatives = new[] { siteCapability, appCapability }.Where(c => c.Length > 0).ToArray();
                 await audit.RecordAsync(allowedEvent with { Outcome = SecurityEvent.Denied, Reason = "capability_not_granted", HttpStatus = 403 });
-                await WriteError(ctx, 403, siteCapability.Length > 0
-                    ? System.Text.Json.JsonSerializer.Serialize(new { error = "capability_not_granted", required = capability, or = siteCapability })
+                await WriteError(ctx, 403, alternatives.Length > 0
+                    ? System.Text.Json.JsonSerializer.Serialize(new { error = "capability_not_granted", required = capability, or = string.Join(",", alternatives) })
                     : $$"""{"error":"capability_not_granted","required":"{{capability}}"}""");
                 return;
             }
+            // mc.* stays within the caller's apps when it has any; mc.manage on an app's CDN zone always checks the app.
+            var appResource = metadata.GetValueOrDefault("AppResource") ?? nameof(AppResource.None);
+            var appCheck = viaApp
+                || (caller.Apps is not null && appResource != nameof(AppResource.None) && appResource != nameof(AppResource.AppPullZone));
+            if (appCheck)
+                ctx.Items[AppAccessItem] = new AppAccess(caller.Apps, viaApp);
             // The sites.* operations themselves always stay within sites; pull zone operations only when granted that way.
             var siteResource = metadata.GetValueOrDefault("SiteResource") ?? nameof(SiteResource.None);
             if (siteResource != nameof(SiteResource.None) && (viaSite || capability.StartsWith("sites.", StringComparison.Ordinal)))
@@ -72,7 +84,7 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
         }
 
         // Inject the owner's own bunny.net API key via Items, so the route transform adds it after header copying. A
-        // storage request gets the zone's password instead (SitePolicy looks it up with the owner's key).
+        // storage request gets the zone's password instead (ScopePolicy looks it up with the owner's key).
         if (metadata["CredentialKind"] is "AccountApiKey" or "StorageZonePassword")
         {
             var reason = TryUnprotectKey(caller.Owner, out var plaintextKey);
@@ -146,7 +158,7 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
         // Never broader than what the credential was issued for, nor than what the principal may do now.
         var effective = NameList.Parse(credential.Capabilities).Where(resolved.Principal.Capabilities.Contains).ToHashSet(StringComparer.Ordinal);
         var audit = resolved.Principal.Describe("proxy.request", SecurityEvent.Allowed) with { CredentialId = credential.Id };
-        return (new Caller(resolved.Principal.Owner, effective, resolved.Principal.Sites, audit), null);
+        return (new Caller(resolved.Principal.Owner, effective, resolved.Principal.Sites, resolved.Principal.Apps, audit), null);
     }
 
     /// <summary>Returns a denial reason, or null with the decrypted key.</summary>
@@ -179,3 +191,9 @@ public sealed class BunnyProxyGate(IDataProtectionProvider dataProtection)
 /// a sites.* capability standing in for pullzone.*, so the operation's site body rules apply too.
 /// </summary>
 public sealed record SiteAccess(SiteScope? Scope, bool ViaSiteCapability);
+
+/// <summary>
+/// The request must stay within <paramref name="Scope"/> (null: any app). <paramref name="ViaAppCapability"/>: a pull zone
+/// operation granted by mc.manage, allowed only on the CDN zone of an app within the scope.
+/// </summary>
+public sealed record AppAccess(AppScope? Scope, bool ViaAppCapability);
